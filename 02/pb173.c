@@ -80,6 +80,8 @@ static ssize_t pb173_write(struct file *filp, const char __user *buf,
 {
 	char *string;
 	size_t n = 0;
+	struct pb173_data *data;
+	data = filp->private_data;
 
 	/* buffer too big */
 	if (count > 50)
@@ -91,7 +93,7 @@ static ssize_t pb173_write(struct file *filp, const char __user *buf,
 
 	n = count - copy_from_user(string, buf, count);
 	string[n] = '\0';
-	pr_info("pb173:\t\"%s\"\n", string);
+	pr_info("pb173[%d]:\t'%s'\n", data->id, string);
 	kfree(string);
 	return n;
 }
@@ -114,7 +116,6 @@ static ssize_t pb173_read(struct file *filp, char __user *buf,
 		len = count;
 
 	n = len-copy_to_user(buf, my_string, len);
-/*	pr_info("copied %d bytes to %d\n", n, data->id); */
 	return n;
 }
 
@@ -129,7 +130,7 @@ static int pb173_open(struct inode *inode, struct file *filp)
 	data->id = ++cnt;
 	filp->private_data = data;
 	set_len(filp, 0);
-	pr_info("pb173[%d]\topened\n", data->id);
+	pr_info("pb173[%d]:\topened\n", data->id);
 	return 0;
 }
 
@@ -138,7 +139,7 @@ static int pb173_release(struct inode *inode, struct file *filp)
 	struct pb173_data *data;
 
 	data = filp->private_data;
-	pr_info("pb173[%d]\tclosed\n", data->id);
+	pr_info("pb173[%d]:\tclosed\n", data->id);
 	kfree(filp->private_data);
 	filp->private_data = NULL;
 	cnt--;
@@ -168,8 +169,10 @@ static int pb173_init(void)
 	rv = misc_register(&mdev);
 	if (rv >= 0) {
 		cnt = 0;
-		pr_info("[pb173]:\tread: %x, write: %x\n",
-			IOCTL_READ, IOCTL_WRITE);
+		/* :-( */
+		pr_info("[pb173]:\tread: %lx, write: %lx\n",
+			(unsigned long) IOCTL_READ,
+			(unsigned long) IOCTL_WRITE);
 	}
 	return rv;
 }

@@ -4,7 +4,8 @@ import array
 import fcntl
 
 def test_rdwr():
-	ioctl_read = 0x80043f00
+#	ioctl_read = 0x80083f00	# 64b Debian
+	ioctl_read = 0x80043f00	# 32b Fedora
 	ioctl_write= 0x40043f01
 	fd=os.open("/dev/pb173", os.O_RDWR)
 	st=array.array('l', [0])
