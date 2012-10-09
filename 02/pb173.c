@@ -9,20 +9,20 @@
 #include <linux/miscdevice.h>
 #include <linux/slab.h>
 #include <linux/ioctl.h>
+#include <linux/debugfs.h>
 
 #define MY_MAGIC	'?'
-#define IOCTL_READ	_IOR(MY_MAGIC, 0, int *)
+#define IOCTL_READ	_IOR(MY_MAGIC, 0, int)	/* ... */
 #define IOCTL_WRITE	_IOW(MY_MAGIC, 1, int)
 
 
-int cnt;
+__u16 count;			/* count of opened instances */
 char *my_string = "Ahoj";
 
 struct pb173_data {
 	int id;
 	size_t len;
 };
-
 
 #define DEFAULT_LEN strlen(my_string)
 static void set_len(struct file *filp, size_t len)
@@ -60,7 +60,7 @@ static long pb173_ioctl(struct file *filp,
 		size_t x;
 		int *ptr;
 	} arg;
-
+	pr_info("st: %x\n", cmd);
 	arg.l = argument;
 	switch (cmd) {
 	case IOCTL_READ:
@@ -70,7 +70,7 @@ static long pb173_ioctl(struct file *filp,
 		set_len(filp, arg.x);
 		break;
 	default:
-		return -ENOTTY;
+		return 0;
 	}
 	return 0;
 }
@@ -127,7 +127,7 @@ static int pb173_open(struct inode *inode, struct file *filp)
 	if (data == NULL)
 		return -ENOMEM;
 
-	data->id = ++cnt;
+	data->id = ++count;
 	filp->private_data = data;
 	set_len(filp, 0);
 	pr_info("pb173[%d]:\topened\n", data->id);
@@ -142,7 +142,7 @@ static int pb173_release(struct inode *inode, struct file *filp)
 	pr_info("pb173[%d]:\tclosed\n", data->id);
 	kfree(filp->private_data);
 	filp->private_data = NULL;
-	cnt--;
+	count--;
 	return 0;
 }
 
@@ -163,24 +163,121 @@ struct miscdevice mdev = {
 	.mode	= 0666,
 };
 
+
+
+/*	some debugging stuff */
+
+
+static ssize_t core_read(struct file *filp, char __user *buf,
+		size_t count, loff_t *ppos)
+{
+	int rv;
+	if (ppos && *ppos != 0)
+		return 0;
+
+	rv = simple_read_from_buffer(buf,
+			THIS_MODULE->core_text_size, ppos,
+			THIS_MODULE->module_core, count);
+	return rv;
+}
+
+struct {
+	struct dentry *rootdir;
+	struct dentry *counter;
+	struct dentry *core;
+
+
+} debug;
+
+const struct file_operations debug_bintext_fops = {
+	.owner	= THIS_MODULE,
+	.read	= core_read,
+};
+
+static void remove_debugfs_entries(void)
+{
+	debugfs_remove_recursive(debug.rootdir);
+	memset(&debug, 0, sizeof(debug));
+}
+
+static int _create_debugfs_entries(void)
+{
+	/*	clear all	*/
+	memset(&debug, 0, sizeof(debug));
+
+	/*	create root directory	*/
+	debug.rootdir = debugfs_create_dir("pb171", NULL);
+	if (IS_ERR_OR_NULL(debug.rootdir)) {
+		debug.rootdir = NULL;
+		return -1;
+	}
+
+	/*	create instance counter	*/
+	debug.counter = debugfs_create_u16("counter", 0444,
+				debug.rootdir, &count);
+	if (IS_ERR_OR_NULL(debug.counter)) {
+		debug.counter = NULL;
+		return -1;
+	}
+
+	/*	create 'core' file	*/
+	debug.core = debugfs_create_file("core", 0444,
+			debug.rootdir, NULL, &debug_bintext_fops);
+	if (IS_ERR_OR_NULL(debug.core)) {
+		debug.core = NULL;
+		return -1;
+	}
+
+	return 0;
+}
+
+static int create_debugfs_entries(void)
+{
+	if (_create_debugfs_entries() != 0) {
+		remove_debugfs_entries();
+		return -1;
+	}
+	return 0;
+}
+
 static int pb173_init(void)
 {
 	int rv;
+
+	/* clear counter */
+	count = 0;
+
+	/* register device */
 	rv = misc_register(&mdev);
 	if (rv >= 0) {
-		cnt = 0;
+		count = 0;
 		/* :-( */
 		pr_info("[pb173]:\tread: %lx, write: %lx\n",
 			(unsigned long) IOCTL_READ,
 			(unsigned long) IOCTL_WRITE);
+	} else
+		return rv;
+
+	/* some debugging stuff */
+	if (create_debugfs_entries() != 0) {
+		misc_deregister(&mdev);
+		return -EIO;
 	}
-	return rv;
+	pr_info("[pb173]:\tsizeof(int) == %d\n", sizeof(int));
+	/* print core */
+	print_hex_dump_bytes("", DUMP_PREFIX_NONE,
+			THIS_MODULE->module_core,
+			THIS_MODULE->core_text_size);
+
+	return 0;
 }
 
 static void pb173_exit(void)
 {
-	pr_info("[pb173]\tunloaded.");
+	remove_debugfs_entries();
 	misc_deregister(&mdev);
+
+	pr_info("[pb173]\tunloaded.\n");
 }
 
 module_init(pb173_init);
