@@ -171,13 +171,11 @@ struct miscdevice mdev = {
 static ssize_t core_read(struct file *filp, char __user *buf,
 		size_t count, loff_t *ppos)
 {
-	int rv;
-	if (ppos && *ppos != 0)
-		return 0;
+	ssize_t rv;
 
-	rv = simple_read_from_buffer(buf,
-			THIS_MODULE->core_text_size, ppos,
-			THIS_MODULE->module_core, count);
+	rv = simple_read_from_buffer(buf, count, ppos,
+			THIS_MODULE->module_core,
+			THIS_MODULE->core_text_size);
 	return rv;
 }
 
