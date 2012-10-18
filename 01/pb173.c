@@ -1,71 +1,57 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/jiffies.h>
-/*
- *	Proc je tu ten wrapper pro kmalloc?
- *	Misto funkce pb173_foo je rozpoznana predchozi exportovana funkce
- *	(pb173_exported, pokud neexistuje, tak kmalloc)
- */
-/********************************/
-/*	<some useless stuff>	*/
-int gl;
-int pb173_exported(int bar)
-{
-	return 2*bar;
-}
-EXPORT_SYMBOL(pb173_exported);
+#include <linux/io.h>
+#include <linux/mm.h>
 
-int pb173_foo(int bar)
-{
-	return ++bar;
-}
-static int bar(int foo)
-{
-	return --foo;
-}
-/*	</some useless stuff>	*/
-/********************************/
 static int my_init(void)
 {
-	gl = pb173_foo(bar(0xDEADBEEF));
-	pr_info("hello world\n");
-	return 0;
-}
+	u32 *virt;
+	void *map;
+	phys_addr_t phys;
+	struct page *sp;
+	char buff[5];
 
-static void logthissymbol(void *p)
-{
-	pr_info("0x%p => %pF\n", p, p);
-	return;
+	virt = ioremap_cache(0xdafe9000, 0x38);
+
+	if (virt) {
+		pr_info("signature: 0x%x\nlen: 0x%x\n", virt[0], virt[1]);
+		memcpy(buff, virt, 4);
+		buff[4] = '\0';
+		pr_info("signature: %s\n", buff);
+		iounmap(virt);
+	}
+
+	/*  */
+
+	virt = (u32 *)__get_free_page(GFP_KERNEL);
+	if (virt) {
+		strcpy((char *)virt, "Ahoj svete\n");
+		phys = virt_to_phys(virt);
+		sp = virt_to_page(virt);
+		SetPageReserved(sp);
+		map = ioremap(phys, PAGE_SIZE);
+
+		pr_info("virt:\t%p\n"
+			"phys:\t%p\n"
+			"sp:\t%p\n"
+			"map:\t%p\n"
+			"pfn:\t%lx\n", virt, (void *)phys, sp, map, page_to_pfn(sp));
+
+		strcpy(map, "Skakal pes pres oves");
+		pr_info("*virt == \"%s\"\n", (char *)virt);
+
+		iounmap(map);
+		ClearPageReserved(sp);
+		free_page((unsigned long)virt);
+	}
+
+	return 0;
 }
 
 static void my_exit(void)
 {
-	char *mem;
-
-	logthissymbol(&gl);
-	logthissymbol(pb173_foo);
-	logthissymbol(pb173_exported);
-	logthissymbol(my_init);
-
-	logthissymbol(kmalloc);
-	logthissymbol(printk);
-	logthissymbol((void *)&jiffies);
-
-	pr_info("\n***stack variable***\n");
-	logthissymbol(&mem);
-	pr_info("***string constant***\n");
-	logthissymbol("muj_uzasny_retezec");
-	pr_info("***return adress***\n");
-	logthissymbol(__builtin_return_address(0));
-
-	mem = kmalloc(100, GFP_KERNEL);
-	if (mem) {
-		pr_info("***kmalloc()ed memory***\n");
-		logthissymbol(mem);
-		strcpy(mem, "bye");
-		pr_info("%s\n", mem);
-		kfree(mem);
-	}
+	pr_info("sizeof(struct page) == %d\n", sizeof(struct page));
 }
 
 module_init(my_init);
