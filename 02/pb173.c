@@ -36,7 +36,7 @@ static ssize_t pb173_wd_write(struct file *filp, const char __user *buf,
 	n = simple_write_to_buffer(buffer, BUFSIZE, offp, buf, count);
 	write_unlock_irqrestore(&buffer_lock, flags);
 
-	msleep(1000);
+	msleep(20);
 	return n;
 }
 
