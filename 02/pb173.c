@@ -9,10 +9,13 @@
 #include <linux/delay.h>
 
 
-
+#if 0
 /* shared read/write buffer */
 #define BUFSIZE	128
 char buffer[BUFSIZE];
+#endif
+char *buffer;
+#define BUFSIZE	(20*1024*1024)
 static rwlock_t buffer_lock = __RW_LOCK_UNLOCKED(buffer_lock);
 
 /*****************************************/
@@ -351,6 +354,25 @@ static int create_debugfs_entries(void)
 	return 0;
 }
 
+static int pb173_init_memory(void)
+{
+	int i;
+	void *addr;
+
+	buffer = vmalloc(BUFSIZE);
+	if (buffer == NULL)
+		return -ENOMEM;
+
+	memset(buffer, 0, BUFSIZE);
+	for (i = 0; i < BUFSIZE / PAGE_SIZE; i++) {
+		addr = buffer + i*PAGE_SIZE;
+		pr_info("writing to %p\n", addr);
+		snprintf(addr, PAGE_SIZE,
+				"%p:%p\n", addr, (void *)virt_to_phys(addr));
+	}
+	return 0;
+}
+
 static int pb173_init(void)
 {
 	int rv;
@@ -358,56 +380,61 @@ static int pb173_init(void)
 	/* clear counter */
 	atomic_set(&hello_count.atomic, 0);
 	pr_info("init\n");
-	/* register read device */
+
 	rv = misc_register(&read_device);
-	if (rv < 0) {
-		pr_info("can't register read device\n");
-		return rv;
-	}
+	if (rv < 0)
+		goto error_rdev;
 
-	/* :-( */
-	pr_info("[pb173]:\tread: %lx, write: %lx\n",
-		(unsigned long) IOCTL_READ,
-		(unsigned long) IOCTL_WRITE);
-
-
-	/* register write device */
 	rv = misc_register(&write_device);
-	if (rv < 0) {
-		misc_deregister(&read_device);
-		pr_info("can't register write device\n");
-		return rv;
-	}
-	/* clear buffer */
-	memset(buffer, 0, sizeof(buffer));
+	if (rv < 0)
+		goto error_wdev;
 
 	rv = misc_register(&hello_device);
-	if (rv < 0) {
-		misc_deregister(&read_device);
-		misc_deregister(&write_device);
-		pr_info("can't register hello device\n");
-		return rv;
-	}
+	if (rv < 0)
+		goto error_hdev;
+
 
 	/* some debugging stuff */
 	if (create_debugfs_entries() != 0) {
-		misc_deregister(&read_device);
-		misc_deregister(&write_device);
-		misc_deregister(&hello_device);
-		return -EIO;
+		rv = -EIO;
+		goto error_debugfs;
 	}
-	pr_info("[pb173]:\tsizeof(int) == %d\n", sizeof(int));
+
+	rv = pb173_init_memory();
+	if (rv < 0) {
+		rv = -ENOMEM;
+		goto error_mem;
+	}
+
 	/* print core */
 /*
 	print_hex_dump_bytes("", DUMP_PREFIX_NONE,
 			THIS_MODULE->module_core,
 			THIS_MODULE->core_text_size);
 */
+
+	pr_info("[pb173]:\tread: %lx, write: %lx\n",
+		(unsigned long) IOCTL_READ,
+		(unsigned long) IOCTL_WRITE);
+
 	return 0;
+	/* error handling */
+error_mem:
+	remove_debugfs_entries();
+error_debugfs:
+	misc_deregister(&hello_device);
+error_hdev:
+	misc_deregister(&write_device);
+error_wdev:
+	misc_deregister(&read_device);
+error_rdev:
+
+	return -rv;
 }
 
 static void pb173_exit(void)
 {
+	vfree(buffer);
 	remove_debugfs_entries();
 	misc_deregister(&read_device);
 	misc_deregister(&write_device);
