@@ -24,22 +24,55 @@ static rwlock_t buffer_lock = __RW_LOCK_UNLOCKED(buffer_lock);
 /* Only one can open write device */
 atomic_t wd_free = ATOMIC_INIT(1);
 
+/* */
+static ssize_t my_pretty_write(char *to, size_t avail, loff_t *ppos, const char __user *from, size_t count, unsigned mdelay)
+{
+	size_t i;
+	unsigned long flags;
+	char x;
+	loff_t pos;
+
+	pos = *ppos;
+	if (pos < 0)
+		return -EINVAL;
+
+	/* bound check */
+	if (pos >= avail || count == 0)
+		return 0;
+
+	if (count > avail - pos)
+		count = avail - pos;
+
+	/* write 'bytes' characters */
+	for (i = 0; i < count; i++) {
+		/* lock, write & unlock */
+		write_lock_irqsave(&buffer_lock, flags);
+		{
+
+			get_user(x, from + i);
+			to[pos + i] = x;
+		}
+		write_unlock_irqrestore(&buffer_lock, flags);
+		/* sleep */
+		msleep(mdelay);
+	}
+	*ppos = pos + i;
+
+	return i;
+}
+
 static ssize_t pb173_wd_write(struct file *filp, const char __user *buf,
 		size_t count, loff_t *offp)
 {
-	unsigned long flags;
 	size_t n;
 
 	/* how many bytes? */
 	if (count > 5)
 		count = 5;
 
-	/* lock, write & unlock */
-	write_lock_irqsave(&buffer_lock, flags);
-	n = simple_write_to_buffer(buffer, BUFSIZE, offp, buf, count);
-	write_unlock_irqrestore(&buffer_lock, flags);
+	n = my_pretty_write(buffer, BUFSIZE, offp, buf, count, 20);
 
-	msleep(20);
+//	msleep(20);
 	return n;
 }
 
@@ -366,7 +399,6 @@ static int pb173_init_memory(void)
 	memset(buffer, 0, BUFSIZE);
 	for (i = 0; i < BUFSIZE / PAGE_SIZE; i++) {
 		addr = buffer + i*PAGE_SIZE;
-		pr_info("writing to %p\n", addr);
 		snprintf(addr, PAGE_SIZE,
 				"%p:%p\n", addr, (void *)virt_to_phys(addr));
 	}
