@@ -7,6 +7,7 @@
 #include <linux/ioctl.h>
 #include <linux/debugfs.h>
 #include <linux/delay.h>
+#include <linux/mm.h>
 
 
 #if 0
@@ -391,6 +392,7 @@ static int pb173_init_memory(void)
 {
 	int i;
 	void *addr;
+	phys_addr_t paddr;
 
 	buffer = vmalloc(BUFSIZE);
 	if (buffer == NULL)
@@ -399,8 +401,8 @@ static int pb173_init_memory(void)
 	memset(buffer, 0, BUFSIZE);
 	for (i = 0; i < BUFSIZE / PAGE_SIZE; i++) {
 		addr = buffer + i*PAGE_SIZE;
-		snprintf(addr, PAGE_SIZE,
-				"%p:%p\n", addr, (void *)virt_to_phys(addr));
+		paddr = page_to_phys(vmalloc_to_page(addr));
+		snprintf(addr, PAGE_SIZE,"%p:%p\n", addr, (void *)paddr);
 	}
 	return 0;
 }
