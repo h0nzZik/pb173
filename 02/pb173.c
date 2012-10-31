@@ -10,14 +10,11 @@
 #include <linux/mm.h>
 
 
-#if 0
 /* shared read/write buffer */
-#define BUFSIZE	128
-char buffer[BUFSIZE];
-#endif
-char *buffer;
 #define BUFSIZE	(20*1024*1024)
-static rwlock_t buffer_lock = __RW_LOCK_UNLOCKED(buffer_lock);
+char *buffer;
+DEFINE_MUTEX(buffer_mutex);
+
 
 /*****************************************/
 /*		write device		 */
@@ -26,10 +23,10 @@ static rwlock_t buffer_lock = __RW_LOCK_UNLOCKED(buffer_lock);
 atomic_t wd_free = ATOMIC_INIT(1);
 
 /* */
-static ssize_t my_pretty_write(char *to, size_t avail, loff_t *ppos, const char __user *from, size_t count, unsigned mdelay)
+static ssize_t my_pretty_write(char *to, size_t avail, loff_t *ppos,
+		const char __user *from, size_t count, unsigned mdelay)
 {
 	size_t i;
-	unsigned long flags;
 	char x;
 	loff_t pos;
 
@@ -44,19 +41,16 @@ static ssize_t my_pretty_write(char *to, size_t avail, loff_t *ppos, const char 
 	if (count > avail - pos)
 		count = avail - pos;
 
+	/* lock buffer */
+	mutex_lock(&buffer_mutex);
 	/* write 'bytes' characters */
 	for (i = 0; i < count; i++) {
-		/* lock, write & unlock */
-		write_lock_irqsave(&buffer_lock, flags);
-		{
-
-			get_user(x, from + i);
-			to[pos + i] = x;
-		}
-		write_unlock_irqrestore(&buffer_lock, flags);
-		/* sleep */
+		get_user(x, from + i);
+		to[pos + i] = x;
 		msleep(mdelay);
 	}
+	/* unlock buffer */
+	mutex_unlock(&buffer_mutex);
 	*ppos = pos + i;
 
 	return i;
@@ -73,7 +67,6 @@ static ssize_t pb173_wd_write(struct file *filp, const char __user *buf,
 
 	n = my_pretty_write(buffer, BUFSIZE, offp, buf, count, 20);
 
-//	msleep(20);
 	return n;
 }
 
@@ -123,14 +116,13 @@ static ssize_t pb173_rd_read(struct file *filp, char __user *buf,
 	size_t count, loff_t *offp)
 {
 	int n;
-	unsigned long flags;
 
 	if (count == 0)
 		return 0;
 
-	read_lock_irqsave(&buffer_lock, flags);
+	mutex_lock(&buffer_mutex);
 	n = simple_read_from_buffer(buf, count, offp, buffer, BUFSIZE);
-	read_unlock_irqrestore(&buffer_lock, flags);
+	mutex_unlock(&buffer_mutex);
 
 	return n;
 }
@@ -402,7 +394,7 @@ static int pb173_init_memory(void)
 	for (i = 0; i < BUFSIZE / PAGE_SIZE; i++) {
 		addr = buffer + i*PAGE_SIZE;
 		paddr = page_to_phys(vmalloc_to_page(addr));
-		snprintf(addr, PAGE_SIZE,"%p:%p\n", addr, (void *)paddr);
+		snprintf(addr, PAGE_SIZE, "%p:%p\n", addr, (void *)paddr);
 	}
 	return 0;
 }
