@@ -394,7 +394,7 @@ static int pb173_init_memory(void)
 	for (i = 0; i < BUFSIZE / PAGE_SIZE; i++) {
 		addr = buffer + i*PAGE_SIZE;
 		paddr = page_to_phys(vmalloc_to_page(addr));
-		snprintf(addr, PAGE_SIZE, "%p:%p\n", addr, (void *)paddr);
+		snprintf(addr, PAGE_SIZE, "%p:0x%llx\n", addr, (unsigned long long)paddr);
 	}
 	return 0;
 }
