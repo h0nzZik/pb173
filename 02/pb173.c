@@ -8,19 +8,87 @@
 #include <linux/debugfs.h>
 #include <linux/delay.h>
 #include <linux/mm.h>
+#include <linux/kfifo.h>
+
+/* Fifo device */
+#define PB173_FIFO_SIZE (8*1024)
+
+static DECLARE_KFIFO(pb173_fifo, unsigned char, PB173_FIFO_SIZE);
+static DEFINE_MUTEX(fifo_read_mutex);
+static DEFINE_MUTEX(fifo_write_mutex);
+
+static ssize_t pb173_fifo_read(struct file *filp, char __user *buf,
+	size_t count, loff_t *offp)
+{
+	ssize_t no;
+	int rv;
+
+	if (mutex_lock_interruptible(&fifo_read_mutex))
+		return -ERESTARTSYS;
+
+	rv = kfifo_to_user(&pb173_fifo, buf, count, &no);
+
+	mutex_unlock(&fifo_read_mutex);
+
+	if (rv)
+		return -EFAULT;
+	else
+		return no;
+}
+
+
+static ssize_t pb173_fifo_write(struct file *filp, const char __user *buf,
+		size_t count, loff_t *offp)
+{
+	ssize_t no;
+	int rv;
+
+	pr_info("fifo_write\n");
+
+	if (mutex_lock_interruptible(&fifo_write_mutex))
+		return -ERESTARTSYS;
+
+	rv = kfifo_from_user(&pb173_fifo, buf, count, &no);
+
+	mutex_unlock(&fifo_write_mutex);
+	if (rv)
+		return -EFAULT;
+	else
+		return no;
+}
+
+
+
+static const struct file_operations fifo_device_fops = {
+	.owner		= THIS_MODULE,
+	.read		= pb173_fifo_read,
+	.write		= pb173_fifo_write,
+};
+
+
+
+static struct miscdevice fifo_device = {
+	.minor		= MISC_DYNAMIC_MINOR,
+	.fops		= &fifo_device_fops,
+	.nodename	= "pb173_fifo",
+	.name		= "pb173_fifo",
+	.mode		= 0666,
+};
+
+
 
 
 /* shared read/write buffer */
 #define BUFSIZE	(20*1024*1024)
-char *buffer;
-DEFINE_MUTEX(buffer_mutex);
+static char *buffer;
+static DEFINE_MUTEX(buffer_mutex);
 
 
 /*****************************************/
 /*		write device		 */
 
 /* Only one can open write device */
-atomic_t wd_free = ATOMIC_INIT(1);
+static atomic_t wd_free = ATOMIC_INIT(1);
 
 /* */
 static ssize_t my_pretty_write(char *to, size_t avail, loff_t *ppos,
@@ -94,14 +162,14 @@ static int pb173_wd_release(struct inode *inode, struct file *filp)
 	return 0;
 }
 
-const struct file_operations write_device_fops = {
+static const struct file_operations write_device_fops = {
 	.owner		= THIS_MODULE,
 	.open		= pb173_wd_open,
 	.write		= pb173_wd_write,
 	.release	= pb173_wd_release,
 };
 
-struct miscdevice write_device = {
+static struct miscdevice write_device = {
 	.minor		= MISC_DYNAMIC_MINOR,
 	.fops		= &write_device_fops,
 	.nodename	= "pb173_write",
@@ -127,14 +195,14 @@ static ssize_t pb173_rd_read(struct file *filp, char __user *buf,
 	return n;
 }
 
-const struct file_operations read_device_fops = {
+static const struct file_operations read_device_fops = {
 	.owner		= THIS_MODULE,
 	.read		= pb173_rd_read,
 };
 
 
 
-struct miscdevice read_device = {
+static struct miscdevice read_device = {
 	.minor		= MISC_DYNAMIC_MINOR,
 	.fops		= &read_device_fops,
 	.nodename	= "pb173_read",
@@ -149,12 +217,12 @@ struct miscdevice read_device = {
 #define IOCTL_READ	_IOR(MY_MAGIC, 0, int)	/* ... */
 #define IOCTL_WRITE	_IOW(MY_MAGIC, 1, int)
 
-union {
+static union {
 	atomic_t atomic;
 	__u16 debug;
 } hello_count;
 
-const char *hello_string = "Ahoj";
+static const char *hello_string = "Ahoj";
 
 struct pb173_hello {
 	int id;
@@ -285,7 +353,7 @@ static long pb173_hello_ioctl(struct file *filp,
 	return 0;
 }
 
-const struct file_operations hello_device_fops = {
+static const struct file_operations hello_device_fops = {
 	.owner		= THIS_MODULE,
 	.open		= pb173_hello_open,
 	.read		= pb173_hello_read,
@@ -296,7 +364,7 @@ const struct file_operations hello_device_fops = {
 
 
 
-struct miscdevice hello_device = {
+static struct miscdevice hello_device = {
 	.minor		= MISC_DYNAMIC_MINOR,
 	.fops		= &hello_device_fops,
 	.nodename	= "pb173_hello",
@@ -321,7 +389,7 @@ static ssize_t core_read(struct file *filp, char __user *buf,
 	return rv;
 }
 
-struct {
+static struct {
 	struct dentry *rootdir;
 	struct dentry *counter;
 	struct dentry *core;
@@ -329,7 +397,7 @@ struct {
 
 } debug;
 
-const struct file_operations debug_bintext_fops = {
+static const struct file_operations debug_bintext_fops = {
 	.owner	= THIS_MODULE,
 	.read	= core_read,
 };
@@ -407,6 +475,12 @@ static int pb173_init(void)
 	atomic_set(&hello_count.atomic, 0);
 	pr_info("init\n");
 
+
+	rv = misc_register(&fifo_device);
+	if (rv < 0)
+		goto error_fifo;
+	INIT_KFIFO(pb173_fifo);
+
 	rv = misc_register(&read_device);
 	if (rv < 0)
 		goto error_rdev;
@@ -454,7 +528,10 @@ error_hdev:
 error_wdev:
 	misc_deregister(&read_device);
 error_rdev:
+	misc_deregister(&fifo_device);
+error_fifo:
 
+	pr_warn("error while loading pb173\n");
 	return -rv;
 }
 
@@ -465,6 +542,7 @@ static void pb173_exit(void)
 	misc_deregister(&read_device);
 	misc_deregister(&write_device);
 	misc_deregister(&hello_device);
+	misc_deregister(&fifo_device);
 
 	pr_info("[pb173]\tunloaded.\n");
 }
