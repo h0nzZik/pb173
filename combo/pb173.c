@@ -5,7 +5,8 @@
 #include <linux/pci.h>
 #include <linux/list.h>
 #include <linux/types.h>
-
+#include <linux/irq.h>
+#include <linux/interrupt.h>
 
 #define COMBO_VENDOR	0x18ec
 #define COMBO_DEVICE	0xc058
@@ -101,6 +102,38 @@ static void compare_new_devices(void)
 	}
 }
 
+/* combo */
+#define BAR0_INT_RAISED		0x0040
+#define BAR0_INT_ENABLED	0x0044
+#define BAR0_INT_TRIGGER	0x0048
+#define BAR0_INT_ACK		0x004A
+
+void combo_dump_registers(const void __iomem *bar0)
+{
+	int r, e, a;
+
+	r = readl(bar0 + BAR0_INT_RAISED);
+	e = readl(bar0 + BAR0_INT_TRIGGER);
+	a = readl(bar0 + BAR0_INT_ACK);
+
+	pr_info("%x, %x, %x\n", r, e, a);
+}
+
+/*
+struct combo_data{
+	void __iomem *bar0;
+};
+*/
+
+static irqreturn_t combo_irq_handler (int irq, void *data, struct pt_regs *regs)
+{
+	pr_info("interrupt\n");
+	return IRQ_HANDLED;
+}
+
+
+
+
 static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 {
 	int rv;
@@ -162,7 +195,13 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 
 	pr_info("[pb173]\tid: %x, rev: %x\n", id, rev);
 
-	return 0;
+
+	combo_dump_registers(addr);
+
+	/* irq handler */
+	rv = request_irq(dev->irq, combo_irq_handler, IRQF_SHARED, "combo_driver", addr);
+
+	return rv;
 }
 
 static void my_remove(struct pci_dev *dev)
@@ -173,6 +212,7 @@ static void my_remove(struct pci_dev *dev)
 			PCI_SLOT(dev->devfn), PCI_FUNC(dev->devfn));
 
 	addr = (void __iomem *) pci_get_drvdata(dev);
+	free_irq(dev->irq, addr);
 	iounmap(addr);
 	pci_release_region(dev, 0);
 	pci_disable_device(dev);
