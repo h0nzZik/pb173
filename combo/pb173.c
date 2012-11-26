@@ -15,6 +15,9 @@
 #define COMBO_VENDOR	0x18ec
 #define COMBO_DEVICE	0xc058
 
+/* some old stuff we can hide */
+#if 0
+
 struct dev_list {
 	struct list_head head;
 	struct pci_dev *dev;
@@ -105,6 +108,8 @@ static void compare_new_devices(void)
 		}
 	}
 }
+
+#endif
 
 /* combo */
 #define BAR0_BRIDGE_ID_REV	0x0000
@@ -213,6 +218,12 @@ static void combo_timer_function(unsigned long combo_data)
 }
 
 
+static void combo_do_interrupt(int irq, struct combo_data *data, struct pt_regs *regs, int int_no)
+{
+	combo_int_dump(data->bar0);
+	pr_info("[pb173]\tinterrupt 0x%x on irq %d, jiffies == %lu\n", int_no, irq, jiffies);
+}
+
 static irqreturn_t combo_irq_handler (int irq, void *combo_data, struct pt_regs *regs)
 {
 	struct combo_data *data;
@@ -223,18 +234,14 @@ static irqreturn_t combo_irq_handler (int irq, void *combo_data, struct pt_regs 
 
 	ints = combo_int_get_raised(data->bar0);
 
-
-	combo_int_dump(data->bar0);
-	combo_int_clear(data->bar0, 0x1000);
-	pr_info("interrupt %d, jiffies == %lu\n", irq, jiffies);
-
 	if (ints == 0) {
-		pr_info("interrupt.. what?\n");
+		pr_info("[pb173]\tinterrupt.. but wait. what interrupt?\n");
 		return IRQ_NONE;
 	}
 	which = find_first_bit((unsigned long *)&ints, sizeof(ints)*8);	// je toto ok? s tim pretypovanim..
-	pr_info("it was %dth bit\n", which);
 
+	combo_do_interrupt(irq, data, regs, which);
+	combo_int_clear(data->bar0, 1<<which);
 
 	return IRQ_HANDLED;
 }
