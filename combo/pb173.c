@@ -117,28 +117,19 @@ static void compare_new_devices(void)
 
 struct combo_data{
 	void __iomem *bar0;
+	struct timer_list timer;
 };
 
 
-static void combo_timer_function(unsigned long combo_data);
-
-static DEFINE_TIMER(combo_100hz_timer, combo_timer_function, 0, 0);
-
-
-static void combo_timer_function(unsigned long combo_data)
-{
-//	struct combo_data *data = (void *)combo_data;
-	mod_timer(&combo_100hz_timer, jiffies + msecs_to_jiffies(10));
-}
-
-void combo_dump_registers(const void __iomem *bar0)
+/* register functions */
+static void combo_dump_registers(const void __iomem *bar0)
 {
 	int r, e;
 
 	r = readl(bar0 + BAR0_INT_RAISED);
 	e = readl(bar0 + BAR0_INT_ENABLED);
 
-	pr_info("%x, %x\n", r, e);
+	pr_info("raised:\t%x\n enabled:\t%x\n", r, e);
 }
 
 static void combo_interrupt_enable(void __iomem *bar0)
@@ -184,21 +175,30 @@ static void combo_print_build_info(void __iomem *bar0)
 	pr_info("[pb173]\tid: %x, rev: %x\n", id, rev);
 }
 
+/* interval timer */
+static void combo_timer_function(unsigned long combo_data);
+
+
+static void combo_timer_function(unsigned long combo_data)
+{
+	struct combo_data *data = (void *)combo_data;
+	mod_timer(&data->timer, jiffies + msecs_to_jiffies(1000));
+	combo_interrupt_trigger(data->bar0);
+}
+
 
 static irqreturn_t combo_irq_handler (int irq, void *combo_data, struct pt_regs *regs)
 {
 //	struct combo_data *data;
-	pr_info("interrupt %d\n", irq);
+	pr_info("interrupt %d, jiffies == %lu\n", irq, jiffies);
 	return IRQ_HANDLED;
 }
 
 static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 {
 	int rv;
-	void __iomem *addr;
-
+	void __iomem *bar0;
 	struct combo_data *data;
-
 
 	pr_info("[pb173]\tnew device: %02x:%02x\n", dev_id->vendor, dev_id->device);
 	pr_info("[pb173]\tbus no: %x, slot: %x, func: %x\n", dev->bus->number,
@@ -206,58 +206,64 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 
 	if (pci_enable_device(dev) < 0) {
 		pr_info("[pb173]\tcan't enable device\n");
-		return -EIO;
+		goto error_enable;
 	}
 
 	rv = pci_request_region(dev, 0, "some_name");
 	if (rv < 0) {
 		pr_info("[pb173]\tfailed registering region\n");
-		pci_disable_device(dev);
-		return -EIO;
+		goto error_request;
 	}
 
 	pr_info("bar0: %llx\n", (unsigned long long)pci_resource_start(dev, 0));
-
-
-
-	addr = pci_ioremap_bar(dev, 0);
-	pr_info("mapped to %p\n", addr);
-	if (addr == NULL) {
-		pci_release_region(dev, 0);
-		pci_disable_device(dev);
-		return -EIO;
+	bar0 = pci_ioremap_bar(dev, 0);
+	pr_info("mapped to %p\n", bar0);
+	if (bar0 == NULL) {
+		pr_info("[pb173]\tcan't map bar0\n");
+		goto error_map;
 	}
 
 	data = kmalloc(sizeof(*data), GFP_KERNEL);
 	if (data == NULL) {
-		iounmap(addr);
-		pci_release_region(dev, 0);
-		pci_disable_device(dev);
-		return -EIO;	
+		pr_info("[pb173]\tkmalloc() failed\n");
+		goto error_kmalloc;
 	}
 
-	data->bar0 = addr;
-
-	pr_info("ok\n");
+	data->bar0 = bar0;
 	pci_set_drvdata(dev, data);
 
 	/* irq handler */
 	rv = request_irq(dev->irq, (irq_handler_t)combo_irq_handler, 
 			IRQF_SHARED, "combo_driver", (void *)data);
 	pr_info("req_irq returned %d\n", rv);
-	if (rv)
-		return rv;
+	if (rv) {
+		pr_info("can't register irq handler: %d\n", rv);
+		goto error_req_irq;
+	}
 
 	/* set timer */
-	combo_100hz_timer.data = (long)data;
+	setup_timer(&data->timer, combo_timer_function, (long)data);
+	data->timer.data = (long)data;
+	mod_timer(&data->timer, jiffies + msecs_to_jiffies(1000));
 	// do not start it
 
-	combo_interrupt_enable(addr);
-	combo_dump_registers(addr);
-	combo_interrupt_trigger(addr);
-	combo_interrupt_disable(addr);
-
+	combo_interrupt_enable(bar0);
+	combo_dump_registers(bar0);
+//	combo_interrupt_trigger(bar0);
+//	combo_interrupt_disable(bar0);
 	return 0;
+
+error_req_irq:
+	kfree(data);
+error_kmalloc:
+	iounmap(bar0);
+error_map:
+	pci_release_region(dev, 0);
+
+error_request:
+	pci_disable_device(dev);
+error_enable:
+	return -EIO;
 }
 
 static void my_remove(struct pci_dev *dev)
@@ -266,12 +272,10 @@ static void my_remove(struct pci_dev *dev)
 
 	data = pci_get_drvdata(dev);
 	combo_interrupt_disable(data->bar0);
+	del_timer_sync(&data->timer);
 	pr_info("[pb173]\tremoving %x:%x\n", dev->vendor, dev->device);
 	pr_info("[pb173]\tbus no: %x, slot: %x, func: %x\n", dev->bus->number,
 			PCI_SLOT(dev->devfn), PCI_FUNC(dev->devfn));
-
-
-
 
 	free_irq(dev->irq, data);
 	iounmap(data->bar0);
