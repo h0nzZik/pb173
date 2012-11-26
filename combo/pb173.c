@@ -37,7 +37,7 @@ static void save_pci_devices(void)
 			list_add(&entry->head, &pcidev_list);
 			
 		} else {
-			pr_warn("[pb173]\tkmalloc() failed\n");
+			pr_info("[pb173]\tkmalloc() failed\n");
 		}
 	}
 }
@@ -105,8 +105,8 @@ static void compare_new_devices(void)
 /* combo */
 #define BAR0_INT_RAISED		0x0040
 #define BAR0_INT_ENABLED	0x0044
-#define BAR0_INT_TRIGGER	0x0048
-#define BAR0_INT_ACK		0x004A
+#define BAR0_INT_TRIGGER	0x0060
+#define BAR0_INT_ACK		0x0064
 
 void combo_dump_registers(const void __iomem *bar0)
 {
@@ -117,6 +117,16 @@ void combo_dump_registers(const void __iomem *bar0)
 	a = readl(bar0 + BAR0_INT_ACK);
 
 	pr_info("%x, %x, %x\n", r, e, a);
+}
+
+void combo_interrupt_enable(void __iomem *bar0)
+{
+	writel(0x1000, bar0 + BAR0_INT_ENABLED);
+}
+
+void combo_interrupt_trigger(void __iomem *bar0)
+{
+	writel(0x1000, bar0 + BAR0_INT_TRIGGER);
 }
 
 /*
@@ -195,8 +205,9 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 
 	pr_info("[pb173]\tid: %x, rev: %x\n", id, rev);
 
-
+	combo_interrupt_enable(addr);
 	combo_dump_registers(addr);
+	combo_interrupt_trigger(addr);
 
 	/* irq handler */
 	rv = request_irq(dev->irq, combo_irq_handler, IRQF_SHARED, "combo_driver", addr);
