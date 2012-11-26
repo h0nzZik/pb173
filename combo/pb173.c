@@ -7,6 +7,10 @@
 #include <linux/types.h>
 #include <linux/irq.h>
 #include <linux/interrupt.h>
+#include <linux/timer.h>
+
+
+
 
 #define COMBO_VENDOR	0x18ec
 #define COMBO_DEVICE	0xc058
@@ -103,20 +107,38 @@ static void compare_new_devices(void)
 }
 
 /* combo */
+#define BAR0_BRIDGE_ID_REV	0x0000
+#define BAR0_BRIDGE_BUILD_DATE	0x0004
 #define BAR0_INT_RAISED		0x0040
 #define BAR0_INT_ENABLED	0x0044
 #define BAR0_INT_TRIGGER	0x0060
 #define BAR0_INT_ACK		0x0064
 
+
+struct combo_data{
+	void __iomem *bar0;
+};
+
+
+static void combo_timer_function(unsigned long combo_data);
+
+static DEFINE_TIMER(combo_100hz_timer, combo_timer_function, 0, 0);
+
+
+static void combo_timer_function(unsigned long combo_data)
+{
+//	struct combo_data *data = (void *)combo_data;
+	mod_timer(&combo_100hz_timer, jiffies + msecs_to_jiffies(10));
+}
+
 void combo_dump_registers(const void __iomem *bar0)
 {
-	int r, e, a;
+	int r, e;
 
 	r = readl(bar0 + BAR0_INT_RAISED);
-	e = readl(bar0 + BAR0_INT_TRIGGER);
-	a = readl(bar0 + BAR0_INT_ACK);
+	e = readl(bar0 + BAR0_INT_ENABLED);
 
-	pr_info("%x, %x, %x\n", r, e, a);
+	pr_info("%x, %x\n", r, e);
 }
 
 void combo_interrupt_enable(void __iomem *bar0)
@@ -124,25 +146,24 @@ void combo_interrupt_enable(void __iomem *bar0)
 	writel(0x1000, bar0 + BAR0_INT_ENABLED);
 }
 
+void combo_interrupt_disable(void __iomem *bar0)
+{
+	writel(0x0000, bar0 + BAR0_INT_ENABLED);
+}
+
 void combo_interrupt_trigger(void __iomem *bar0)
 {
 	writel(0x1000, bar0 + BAR0_INT_TRIGGER);
 }
 
-/*
-struct combo_data{
-	void __iomem *bar0;
-};
-*/
 
-static irqreturn_t combo_irq_handler (int irq, void *data, struct pt_regs *regs)
+
+static irqreturn_t combo_irq_handler (int irq, void *combo_data, struct pt_regs *regs)
 {
-	pr_info("interrupt\n");
+//	struct combo_data *data;
+	pr_info("interrupt %d\n", irq);
 	return IRQ_HANDLED;
 }
-
-
-
 
 static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 {
@@ -154,6 +175,9 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 	int id, rev;
 	int btime;
 	int y,m,dd,hh,mm;
+
+
+	struct combo_data *data;
 
 
 	pr_info("[pb173]\tnew device: %02x:%02x\n", dev_id->vendor, dev_id->device);
@@ -182,12 +206,23 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 		pci_disable_device(dev);
 		return -EIO;
 	}
+
+	data = kmalloc(sizeof(*data), GFP_KERNEL);
+	if (data == NULL) {
+		iounmap(addr);
+		pci_release_region(dev, 0);
+		pci_disable_device(dev);
+		return -EIO;	
+	}
+
+	data->bar0 = addr;
+
 	pr_info("ok\n");
-	pci_set_drvdata(dev, (void *)addr);
+	pci_set_drvdata(dev, data);
 
 
 	/* read built time and print it */
-	btime = readl(addr + 0x0004);
+	btime = readl(data->bar0 + BAR0_BRIDGE_BUILD_DATE);
 
 	mm = ((btime >>  0) & 0x0F) + 10 * ((btime >>  4) & 0x0F);
 	hh = ((btime >>  8) & 0x0F) + 10 * ((btime >> 12) & 0x0F);
@@ -198,33 +233,43 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 	pr_info("[[b173]\tbuilt: %d. of %d 200%d at %d:%d\n", dd, m, y, hh, m);
 
 	/* read ID, revision & print it */
-	idrev = readl(addr + 0x0000);
+	idrev = readl(data->bar0 + BAR0_BRIDGE_ID_REV);
 
 	id = (idrev >> 16) & 0xFFFF;
 	rev = idrev & 0xFFFF;
 
 	pr_info("[pb173]\tid: %x, rev: %x\n", id, rev);
 
+	/* irq handler */
+	rv = request_irq(dev->irq, (irq_handler_t)combo_irq_handler, IRQF_SHARED, "combo_driver", (void *)data);
+	if (rv)
+		return rv;
+
+	/* set timer */
+	combo_100hz_timer.data = (void *)data;
+	// do not start it
+
 	combo_interrupt_enable(addr);
 	combo_dump_registers(addr);
 	combo_interrupt_trigger(addr);
+	combo_interrupt_disable(addr);
 
-	/* irq handler */
-	rv = request_irq(dev->irq, combo_irq_handler, IRQF_SHARED, "combo_driver", addr);
-
-	return rv;
+	return 0;
 }
 
 static void my_remove(struct pci_dev *dev)
 {
-	void __iomem *addr;
+	struct combo_data *data;
+
 	pr_info("[pb173]\tremoving %x:%x\n", dev->vendor, dev->device);
 	pr_info("[pb173]\tbus no: %x, slot: %x, func: %x\n", dev->bus->number,
 			PCI_SLOT(dev->devfn), PCI_FUNC(dev->devfn));
 
-	addr = (void __iomem *) pci_get_drvdata(dev);
-	free_irq(dev->irq, addr);
-	iounmap(addr);
+	data = pci_get_drvdata(dev);
+	free_irq(dev->irq, data->bar0);
+	iounmap(data->bar0);
+	data->bar0 = NULL;
+	kfree(data);
 	pci_release_region(dev, 0);
 	pci_disable_device(dev);
 }
