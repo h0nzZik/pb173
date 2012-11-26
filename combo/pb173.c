@@ -8,7 +8,7 @@
 #include <linux/irq.h>
 #include <linux/interrupt.h>
 #include <linux/timer.h>
-
+#include <linux/bitmap.h>
 
 
 
@@ -121,8 +121,9 @@ struct combo_data{
 };
 
 
-/* register functions */
-static void combo_interrupt_dump(const void __iomem *bar0)
+/*	some interrupt functions */
+
+static void combo_int_dump(const void __iomem *bar0)
 {
 	int r, e;
 
@@ -132,24 +133,46 @@ static void combo_interrupt_dump(const void __iomem *bar0)
 	pr_info("raised:\t%x\nenabled:\t%x\n", r, e);
 }
 
-static void combo_interrupt_enable(void __iomem *bar0)
+static inline void combo_int_set_enabled(void __iomem *bar0, unsigned enabled)
 {
-	writel(0x1000, bar0 + BAR0_INT_ENABLED);
+	writel(enabled, bar0 + BAR0_INT_ENABLED);
 }
 
-static void combo_interrupt_disable(void __iomem *bar0)
+static inline unsigned combo_int_get_enabled(void __iomem *bar0)
 {
-	writel(0x0000, bar0 + BAR0_INT_ENABLED);
+	return readl(bar0 + BAR0_INT_ENABLED);
 }
 
-static void combo_interrupt_trigger(void __iomem *bar0)
+static inline void combo_int_enable(void __iomem *bar0, unsigned int_no)
 {
-	writel(0x1000, bar0 + BAR0_INT_TRIGGER);
+	unsigned enabled;
+
+	enabled = int_no | combo_int_get_enabled(bar0);
+	combo_int_set_enabled(bar0, enabled);
 }
 
-static void combo_interrupt_clear(void __iomem *bar0)
+static inline void combo_int_disable(void __iomem *bar0, unsigned int_no)
 {
-	writel(0x1000, bar0 + BAR0_INT_ACK);
+	unsigned enabled;
+
+	enabled = ~int_no & combo_int_get_enabled(bar0);
+	combo_int_set_enabled(bar0, enabled);
+}
+
+static inline void combo_int_trigger(void __iomem *bar0, unsigned int_no)
+{
+	writel(int_no, bar0 + BAR0_INT_TRIGGER);
+}
+
+static inline void combo_int_clear(void __iomem *bar0, unsigned int_no)
+{
+	writel(int_no, bar0 + BAR0_INT_ACK);
+}
+
+
+static inline unsigned combo_int_get_raised(void __iomem *bar0)
+{
+	return readl(bar0 + BAR0_INT_RAISED);
 }
 
 static void combo_print_build_info(void __iomem *bar0)
@@ -181,26 +204,37 @@ static void combo_print_build_info(void __iomem *bar0)
 }
 
 /* interval timer */
-static void combo_timer_function(unsigned long combo_data);
-
-
 static void combo_timer_function(unsigned long combo_data)
 {
 	struct combo_data *data = (void *)combo_data;
 	pr_info("going to trigger it..\n");
 	mod_timer(&data->timer, jiffies + msecs_to_jiffies(1000));
-	combo_interrupt_trigger(data->bar0);
+	combo_int_trigger(data->bar0, 0x1000);
 }
 
 
 static irqreturn_t combo_irq_handler (int irq, void *combo_data, struct pt_regs *regs)
 {
 	struct combo_data *data;
-
+	unsigned ints;
+	int which;
 	data = combo_data;
-	combo_interrupt_dump(data->bar0);
-	combo_interrupt_clear(data->bar0);
+
+
+	ints = combo_int_get_raised(data->bar0);
+
+
+	combo_int_dump(data->bar0);
+	combo_int_clear(data->bar0, 0x1000);
 	pr_info("interrupt %d, jiffies == %lu\n", irq, jiffies);
+
+	if (ints == 0) {
+		pr_info("interrupt.. what?\n");
+		return IRQ_NONE;
+	}
+	which = find_first_bit((unsigned long *)&ints, sizeof(ints)*8);	// je toto ok? s tim pretypovanim..
+	pr_info("it was %dth bit\n", which);
+
 
 	return IRQ_HANDLED;
 }
@@ -258,10 +292,10 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 	mod_timer(&data->timer, jiffies + msecs_to_jiffies(1000));
 	// do not start it
 
-	combo_interrupt_enable(bar0);
-	combo_interrupt_dump(bar0);
-//	combo_interrupt_trigger(bar0);
-//	combo_interrupt_disable(bar0);
+	combo_int_enable(bar0, 0x1000);
+	combo_int_dump(bar0);
+//	combo_int_trigger(bar0);
+//	combo_int_disable(bar0);
 	return 0;
 
 error_req_irq:
@@ -282,7 +316,7 @@ static void my_remove(struct pci_dev *dev)
 	struct combo_data *data;
 
 	data = pci_get_drvdata(dev);
-	combo_interrupt_disable(data->bar0);
+	combo_int_disable(data->bar0, 0x1000);
 	del_timer_sync(&data->timer);
 	pr_info("[pb173]\tremoving %x:%x\n", dev->vendor, dev->device);
 	pr_info("[pb173]\tbus no: %x, slot: %x, func: %x\n", dev->bus->number,
