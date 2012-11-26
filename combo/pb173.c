@@ -141,21 +141,48 @@ void combo_dump_registers(const void __iomem *bar0)
 	pr_info("%x, %x\n", r, e);
 }
 
-void combo_interrupt_enable(void __iomem *bar0)
+static void combo_interrupt_enable(void __iomem *bar0)
 {
 	writel(0x1000, bar0 + BAR0_INT_ENABLED);
 }
 
-void combo_interrupt_disable(void __iomem *bar0)
+static void combo_interrupt_disable(void __iomem *bar0)
 {
 	writel(0x0000, bar0 + BAR0_INT_ENABLED);
 }
 
-void combo_interrupt_trigger(void __iomem *bar0)
+static void combo_interrupt_trigger(void __iomem *bar0)
 {
 	writel(0x1000, bar0 + BAR0_INT_TRIGGER);
 }
 
+static void combo_print_build_info(void __iomem *bar0)
+{
+	/* id, revision, build date */
+	int idrev;
+	int id, rev;
+	int btime;
+	int y,m,dd,hh,mm;
+
+	/* read built time and print it */
+	btime = readl(bar0 + BAR0_BRIDGE_BUILD_DATE);
+
+	mm = ((btime >>  0) & 0x0F) + 10 * ((btime >>  4) & 0x0F);
+	hh = ((btime >>  8) & 0x0F) + 10 * ((btime >> 12) & 0x0F);
+	dd = ((btime >> 16) & 0x0F) + 10 * ((btime >> 20) & 0x0F);
+	m = (btime >> 24) & 0x0F;
+	y = (btime >> 28) & 0x0F;
+
+	pr_info("[[b173]\tbuilt: %d. of %d 200%d at %d:%d\n", dd, m, y, hh, m);
+
+	/* read ID, revision & print it */
+	idrev = readl(bar0 + BAR0_BRIDGE_ID_REV);
+
+	id = (idrev >> 16) & 0xFFFF;
+	rev = idrev & 0xFFFF;
+
+	pr_info("[pb173]\tid: %x, rev: %x\n", id, rev);
+}
 
 
 static irqreturn_t combo_irq_handler (int irq, void *combo_data, struct pt_regs *regs)
@@ -170,19 +197,13 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 	int rv;
 	void __iomem *addr;
 
-	/* id, revision, build date */
-	int idrev;
-	int id, rev;
-	int btime;
-	int y,m,dd,hh,mm;
-
-
 	struct combo_data *data;
 
 
 	pr_info("[pb173]\tnew device: %02x:%02x\n", dev_id->vendor, dev_id->device);
 	pr_info("[pb173]\tbus no: %x, slot: %x, func: %x\n", dev->bus->number,
 			PCI_SLOT(dev->devfn), PCI_FUNC(dev->devfn));
+
 	if (pci_enable_device(dev) < 0) {
 		pr_info("[pb173]\tcan't enable device\n");
 		return -EIO;
@@ -220,33 +241,15 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 	pr_info("ok\n");
 	pci_set_drvdata(dev, data);
 
-
-	/* read built time and print it */
-	btime = readl(data->bar0 + BAR0_BRIDGE_BUILD_DATE);
-
-	mm = ((btime >>  0) & 0x0F) + 10 * ((btime >>  4) & 0x0F);
-	hh = ((btime >>  8) & 0x0F) + 10 * ((btime >> 12) & 0x0F);
-	dd = ((btime >> 16) & 0x0F) + 10 * ((btime >> 20) & 0x0F);
-	m = (btime >> 24) & 0x0F;
-	y = (btime >> 28) & 0x0F;
-
-	pr_info("[[b173]\tbuilt: %d. of %d 200%d at %d:%d\n", dd, m, y, hh, m);
-
-	/* read ID, revision & print it */
-	idrev = readl(data->bar0 + BAR0_BRIDGE_ID_REV);
-
-	id = (idrev >> 16) & 0xFFFF;
-	rev = idrev & 0xFFFF;
-
-	pr_info("[pb173]\tid: %x, rev: %x\n", id, rev);
-
 	/* irq handler */
-	rv = request_irq(dev->irq, (irq_handler_t)combo_irq_handler, IRQF_SHARED, "combo_driver", (void *)data);
+	rv = request_irq(dev->irq, (irq_handler_t)combo_irq_handler, 
+			IRQF_SHARED, "combo_driver", (void *)data);
+	pr_info("req_irq returned %d\n", rv);
 	if (rv)
 		return rv;
 
 	/* set timer */
-	combo_100hz_timer.data = (void *)data;
+	combo_100hz_timer.data = (long)data;
 	// do not start it
 
 	combo_interrupt_enable(addr);
@@ -261,12 +264,16 @@ static void my_remove(struct pci_dev *dev)
 {
 	struct combo_data *data;
 
+	data = pci_get_drvdata(dev);
+	combo_interrupt_disable(data->bar0);
 	pr_info("[pb173]\tremoving %x:%x\n", dev->vendor, dev->device);
 	pr_info("[pb173]\tbus no: %x, slot: %x, func: %x\n", dev->bus->number,
 			PCI_SLOT(dev->devfn), PCI_FUNC(dev->devfn));
 
-	data = pci_get_drvdata(dev);
-	free_irq(dev->irq, data->bar0);
+
+
+
+	free_irq(dev->irq, data);
 	iounmap(data->bar0);
 	data->bar0 = NULL;
 	kfree(data);
@@ -296,7 +303,7 @@ static int my_init(void)
 		return -EIO;
 	}
 
-	save_pci_devices();
+//	save_pci_devices();
 	return 0;
 }
 
@@ -304,8 +311,8 @@ static void my_exit(void)
 {
 	pci_unregister_driver(&combo_driver);
 
-	compare_new_devices();
-	free_missing_devices();
+//	compare_new_devices();
+//	free_missing_devices();
 }
 
 module_init(my_init);
