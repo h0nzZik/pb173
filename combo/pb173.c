@@ -122,7 +122,7 @@ struct combo_data{
 
 
 /* register functions */
-static void combo_dump_registers(const void __iomem *bar0)
+static void combo_interrupt_dump(const void __iomem *bar0)
 {
 	int r, e;
 
@@ -145,7 +145,11 @@ static void combo_interrupt_disable(void __iomem *bar0)
 static void combo_interrupt_trigger(void __iomem *bar0)
 {
 	writel(0x1000, bar0 + BAR0_INT_TRIGGER);
-	writel(0x0000, bar0 + BAR0_INT_TRIGGER);
+}
+
+static void combo_interrupt_clear(void __iomem *bar0)
+{
+	writel(0x1000, bar0 + BAR0_INT_ACK);
 }
 
 static void combo_print_build_info(void __iomem *bar0)
@@ -190,8 +194,13 @@ static void combo_timer_function(unsigned long combo_data)
 
 static irqreturn_t combo_irq_handler (int irq, void *combo_data, struct pt_regs *regs)
 {
-//	struct combo_data *data;
+	struct combo_data *data;
+
+	data = combo_data;
+	combo_interrupt_dump(&data->bar0);
+	combo_interrupt_clear(&data->bar0);
 	pr_info("interrupt %d, jiffies == %lu\n", irq, jiffies);
+
 	return IRQ_HANDLED;
 }
 
@@ -249,7 +258,7 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 	// do not start it
 
 	combo_interrupt_enable(bar0);
-	combo_dump_registers(bar0);
+	combo_interrupt_dump(bar0);
 //	combo_interrupt_trigger(bar0);
 //	combo_interrupt_disable(bar0);
 	return 0;
