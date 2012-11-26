@@ -129,7 +129,7 @@ static void combo_interrupt_dump(const void __iomem *bar0)
 	r = readl(bar0 + BAR0_INT_RAISED);
 	e = readl(bar0 + BAR0_INT_ENABLED);
 
-	pr_info("raised:\t%x\n enabled:\t%x\n", r, e);
+	pr_info("raised:\t%x\nenabled:\t%x\n", r, e);
 }
 
 static void combo_interrupt_enable(void __iomem *bar0)
@@ -145,11 +145,13 @@ static void combo_interrupt_disable(void __iomem *bar0)
 static void combo_interrupt_trigger(void __iomem *bar0)
 {
 	writel(0x1000, bar0 + BAR0_INT_TRIGGER);
+	writel(0x0000, bar0 + BAR0_INT_TRIGGER);
 }
 
 static void combo_interrupt_clear(void __iomem *bar0)
 {
 	writel(0x1000, bar0 + BAR0_INT_ACK);
+	writel(0x0000, bar0 + BAR0_INT_ACK);
 }
 
 static void combo_print_build_info(void __iomem *bar0)
@@ -187,6 +189,7 @@ static void combo_timer_function(unsigned long combo_data);
 static void combo_timer_function(unsigned long combo_data)
 {
 	struct combo_data *data = (void *)combo_data;
+	pr_info("going to trigger it..\n");
 	mod_timer(&data->timer, jiffies + msecs_to_jiffies(1000));
 	combo_interrupt_trigger(data->bar0);
 }
