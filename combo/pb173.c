@@ -135,7 +135,7 @@ static void combo_int_dump(const void __iomem *bar0)
 	r = readl(bar0 + BAR0_INT_RAISED);
 	e = readl(bar0 + BAR0_INT_ENABLED);
 
-	pr_info("raised:\t%x\nenabled:\t%x\n", r, e);
+	pr_info("[pb071]\tints raised: 0x%x\n, enabled: 0x%x\n", r, e);
 }
 
 static inline void combo_int_set_enabled(void __iomem *bar0, unsigned enabled)
@@ -212,7 +212,7 @@ static void combo_print_build_info(void __iomem *bar0)
 static void combo_timer_function(unsigned long combo_data)
 {
 	struct combo_data *data = (void *)combo_data;
-	pr_info("going to trigger it..\n");
+	pr_info("[pb173]\tgoing to trigger int 0x1000 (at %lu pm ;))\n", jiffies);
 	mod_timer(&data->timer, jiffies + msecs_to_jiffies(1000));
 	combo_int_trigger(data->bar0, 0x1000);
 }
@@ -268,9 +268,8 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 		goto error_request;
 	}
 
-	pr_info("bar0: %llx\n", (unsigned long long)pci_resource_start(dev, 0));
 	bar0 = pci_ioremap_bar(dev, 0);
-	pr_info("mapped to %p\n", bar0);
+
 	if (bar0 == NULL) {
 		pr_info("[pb173]\tcan't map bar0\n");
 		goto error_map;
@@ -288,7 +287,6 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 	/* irq handler */
 	rv = request_irq(dev->irq, (irq_handler_t)combo_irq_handler, 
 			IRQF_SHARED, "combo_driver", (void *)data);
-	pr_info("req_irq returned %d\n", rv);
 	if (rv) {
 		pr_info("can't register irq handler: %d\n", rv);
 		goto error_req_irq;
@@ -298,12 +296,9 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 	setup_timer(&data->timer, combo_timer_function, (long)data);
 	data->timer.data = (long)data;
 	mod_timer(&data->timer, jiffies + msecs_to_jiffies(1000));
-	// do not start it
 
 	combo_int_enable(bar0, 0x1000);
 	combo_int_dump(bar0);
-//	combo_int_trigger(bar0);
-//	combo_int_disable(bar0);
 	return 0;
 
 error_req_irq:
