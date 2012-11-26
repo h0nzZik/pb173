@@ -240,8 +240,9 @@ static irqreturn_t combo_irq_handler (int irq, void *combo_data, struct pt_regs 
 	}
 	which = find_first_bit((unsigned long *)&ints, sizeof(ints)*8);	// je toto ok? s tim pretypovanim..
 
-	combo_do_interrupt(irq, data, regs, which);
 	combo_int_clear(data->bar0, 1<<which);
+	combo_do_interrupt(irq, data, regs, which);
+
 
 	return IRQ_HANDLED;
 }
