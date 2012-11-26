@@ -235,7 +235,7 @@ static irqreturn_t combo_irq_handler (int irq, void *combo_data, struct pt_regs 
 	ints = combo_int_get_raised(data->bar0);
 
 	if (ints == 0) {
-		pr_info("[pb173]\tinterrupt.. but wait. what interrupt?\n");
+		pr_info("[pb173]\tinterrupt.. but wait. what interrupt? %lu\n", jiffies); // 
 		return IRQ_NONE;
 	}
 	which = find_first_bit((unsigned long *)&ints, sizeof(ints)*8);	// je toto ok? s tim pretypovanim..
