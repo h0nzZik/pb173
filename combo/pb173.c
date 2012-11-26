@@ -145,6 +145,7 @@ static void combo_interrupt_disable(void __iomem *bar0)
 static void combo_interrupt_trigger(void __iomem *bar0)
 {
 	writel(0x1000, bar0 + BAR0_INT_TRIGGER);
+	writel(0x0000, bar0 + BAR0_INT_TRIGGER);
 }
 
 static void combo_print_build_info(void __iomem *bar0)
