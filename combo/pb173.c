@@ -145,13 +145,11 @@ static void combo_interrupt_disable(void __iomem *bar0)
 static void combo_interrupt_trigger(void __iomem *bar0)
 {
 	writel(0x1000, bar0 + BAR0_INT_TRIGGER);
-	writel(0x0000, bar0 + BAR0_INT_TRIGGER);
 }
 
 static void combo_interrupt_clear(void __iomem *bar0)
 {
 	writel(0x1000, bar0 + BAR0_INT_ACK);
-	writel(0x0000, bar0 + BAR0_INT_ACK);
 }
 
 static void combo_print_build_info(void __iomem *bar0)
@@ -200,8 +198,8 @@ static irqreturn_t combo_irq_handler (int irq, void *combo_data, struct pt_regs 
 	struct combo_data *data;
 
 	data = combo_data;
-	combo_interrupt_dump(&data->bar0);
-	combo_interrupt_clear(&data->bar0);
+	combo_interrupt_dump(data->bar0);
+	combo_interrupt_clear(data->bar0);
 	pr_info("interrupt %d, jiffies == %lu\n", irq, jiffies);
 
 	return IRQ_HANDLED;
