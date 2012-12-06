@@ -416,14 +416,14 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 
 	pr_info("<tam>\n");
 
-	combo_dma_transfer_setup(data->bar0, COMBO_DMA_PCI, COMBO_DMA_PPC, 1, data->dma_phys, COMBO_DMA_PPC_BUFFER, strlen(test_string) );
+	combo_dma_transfer_setup(data->bar0, COMBO_DMA_PCI, COMBO_DMA_PPC, 0, data->dma_phys, COMBO_DMA_PPC_BUFFER, strlen(test_string) );
 	combo_dma_transfer_start(data->bar0);
 	combo_dma_transfer_wait(data->bar0);
 
 	pr_info("</tam>\n");
 	pr_info("<sem>\n");
 
-	combo_dma_transfer_setup(data->bar0, COMBO_DMA_PCI, COMBO_DMA_PPC, 1, COMBO_DMA_PPC_BUFFER, data->dma_phys+10, 10 );
+	combo_dma_transfer_setup(data->bar0, COMBO_DMA_PCI, COMBO_DMA_PPC, 0, COMBO_DMA_PPC_BUFFER, data->dma_phys+10, 10 );
 	combo_dma_transfer_start(data->bar0);
 	combo_dma_transfer_wait(data->bar0);
 
