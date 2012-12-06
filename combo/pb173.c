@@ -409,8 +409,8 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 
 	pr_info("</sem>\n");
 
-	((char *)data->dma_virt)[9]=0;
-	pr_info("received '%s'\n", data->dma_virt);
+	((char *)data->dma_virt)[10+9]=0;
+	pr_info("received '%s'\n", data->dma_virt+10);
 
 	return 0;
 
