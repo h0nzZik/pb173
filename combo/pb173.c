@@ -15,6 +15,9 @@
 #define COMBO_VENDOR	0x18ec
 #define COMBO_DEVICE	0xc058
 
+
+#define COMBO_INT_DMA	0x008
+
 /* some old stuff we can hide */
 #if 0
 
@@ -128,6 +131,7 @@ struct combo_data{
 	void *dma_virt;
 };
 
+char *test_string = "Comboobmo";
 
 /*	some interrupt functions */
 
@@ -210,6 +214,76 @@ static void combo_print_build_info(void __iomem *bar0)
 
 	pr_info("[pb173]\tid: %x, rev: %x\n", id, rev);
 }
+
+/* Combo DMA */
+
+#define BAR0_DMA_SRC		0x0080
+#define BAR0_DMA_DEST		0x0084
+#define BAR0_DMA_NBYTES		0x0088
+#define BAR0_DMA_CMD		0x008C
+/* commands */ 
+#define BAR0_DMA_CMD_RUN	0x0001
+#define BAR0_DMA_CMD_SRC(x)	((x&0x03)<<1)
+#define BAR0_DMA_CMD_DEST(x)	((x&0x03)<<4)
+#define BAR0_DMA_CMD_INT_NO	0x00000080
+#define BAR0_DMA_CMD_INT_ACK	0x80000000
+
+#define COMBO_DMA_LOCALBUS	0x1
+#define COMBO_DMA_PCI		0x2
+#define COMBO_DMA_PPC		0x4
+
+
+#define COMBO_DMA_PPC_BUFFER	0x40000
+
+
+static inline long combo_dma_cmd_read(void __iomem *bar0)
+{
+	return readl(bar0 + BAR0_DMA_CMD);
+}
+
+static inline void combo_dma_cmd_write(void __iomem *bar0, long data)
+{
+	writel(data, bar0 + BAR0_DMA_CMD);
+}
+
+static void combo_dma_transfer_start(void __iomem *bar0)
+{
+	long data;
+
+	data = BAR0_DMA_CMD_RUN | combo_dma_cmd_read(bar0);
+	combo_dma_cmd_write(bar0, data);
+}
+
+static void combo_dma_transfer_wait(void __iomem *bar0)
+{
+	long data;
+	int i;
+
+	i=0;
+	do {
+		msleep(1);
+		data = combo_dma_cmd_read(bar0);
+		i++;
+	} while (data & BAR0_DMA_CMD_RUN && i < 1000);
+
+	pr_info("[pb173]\ttransfer: %d miliseconds\n", i);
+}
+
+static void combo_dma_transfer_setup(void __iomem *bar0, int src_bus,
+		int dest_bus, int use_ints, dma_addr_t src, dma_addr_t dest, long bytes)
+{
+	long data = combo_dma_cmd_read(bar0);
+	data |= BAR0_DMA_CMD_SRC(src_bus);
+	data |= BAR0_DMA_CMD_DEST(dest_bus);
+	if (!use_ints)
+		data |= BAR0_DMA_CMD_INT_NO;
+	combo_dma_cmd_write(bar0, data);
+
+	writel(dest, bar0 + BAR0_DMA_DEST);
+	writel(src,  bar0 + BAR0_DMA_SRC);
+	writel(bytes,bar0 + BAR0_DMA_NBYTES);
+}
+
 
 /* interval timer */
 static void combo_timer_function(unsigned long combo_data)
@@ -306,12 +380,38 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 
 
 	/* do DMA */
+	rv = pci_set_dma_mask(dev, DMA_BIT_MASK(32));
+	if (rv)
+		goto error_dma;
 
-	data->dma_virt = dma_alloc_coherent(NULL, 100, &data->dma_phys, GFP_KERNEL);
+	pci_set_master(dev);
+
+	data->dma_virt = dma_alloc_coherent(&dev->dev, 100, &data->dma_phys, GFP_KERNEL);
 	if (!data->dma_virt) {
 		goto error_dma;
 	}
 	memset(data->dma_virt, 0, 100);
+	strcpy(data->dma_virt, test_string);
+
+	pr_info("<tam>\n");
+
+	combo_dma_transfer_setup(data->bar0, COMBO_DMA_PCI, COMBO_DMA_PPC, 0, data->dma_phys, COMBO_DMA_PPC_BUFFER, strlen(test_string) );
+	combo_dma_transfer_start(data->bar0);
+	combo_dma_transfer_wait(data->bar0);
+
+	pr_info("</tam>\n");
+	pr_info("<sem>\n");
+
+	combo_dma_transfer_setup(data->bar0, COMBO_DMA_PCI, COMBO_DMA_PPC, 0, COMBO_DMA_PPC_BUFFER, data->dma_phys+10, 10 );
+	combo_dma_transfer_start(data->bar0);
+	combo_dma_transfer_wait(data->bar0);
+
+
+	pr_info("</sem>\n");
+
+	((char *)data->dma_virt)[9]=0;
+	pr_info("received '%s'\n", data->dma_virt);
+
 	return 0;
 
 error_dma:
@@ -337,7 +437,7 @@ static void my_remove(struct pci_dev *dev)
 
 	data = pci_get_drvdata(dev);
 
-	dma_free_coherent(NULL, 100, data->dma_virt, data->dma_phys);
+	dma_free_coherent(&dev->dev, 100, data->dma_virt, data->dma_phys);
 	combo_int_disable(data->bar0, 0x1000);
 	del_timer_sync(&data->timer);
 	pr_info("[pb173]\tremoving %x:%x\n", dev->vendor, dev->device);
