@@ -123,6 +123,9 @@ static void compare_new_devices(void)
 struct combo_data{
 	void __iomem *bar0;
 	struct timer_list timer;
+
+	dma_addr_t dma_phys;
+	void *dma_virt;
 };
 
 
@@ -135,7 +138,7 @@ static void combo_int_dump(const void __iomem *bar0)
 	r = readl(bar0 + BAR0_INT_RAISED);
 	e = readl(bar0 + BAR0_INT_ENABLED);
 
-	pr_info("[pb071]\tints raised: 0x%x\n, enabled: 0x%x\n", r, e);
+	pr_info("[pb071]\tints raised: 0x%x, enabled: 0x%x\n", r, e);
 }
 
 static inline void combo_int_set_enabled(void __iomem *bar0, unsigned enabled)
@@ -295,12 +298,25 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 	/* set timer */
 	setup_timer(&data->timer, combo_timer_function, (long)data);
 	data->timer.data = (long)data;
-	mod_timer(&data->timer, jiffies + msecs_to_jiffies(1000));
+	mod_timer(&data->timer, jiffies + msecs_to_jiffies(10000));
 
 	combo_int_enable(bar0, 0x1000);
 	combo_int_dump(bar0);
+
+
+
+	/* do DMA */
+
+	data->dma_virt = dma_alloc_coherent(NULL, 100, &data->dma_phys, GFP_KERNEL);
+	if (!data->dma_virt) {
+		goto error_dma;
+	}
+	memset(data->dma_virt, 0, 100);
 	return 0;
 
+error_dma:
+	combo_int_disable(data->bar0, 0x1000);
+	del_timer_sync(&data->timer);
 error_req_irq:
 	kfree(data);
 error_kmalloc:
@@ -318,7 +334,10 @@ static void my_remove(struct pci_dev *dev)
 {
 	struct combo_data *data;
 
+
 	data = pci_get_drvdata(dev);
+
+	dma_free_coherent(NULL, 100, data->dma_virt, data->dma_phys);
 	combo_int_disable(data->bar0, 0x1000);
 	del_timer_sync(&data->timer);
 	pr_info("[pb173]\tremoving %x:%x\n", dev->vendor, dev->device);
