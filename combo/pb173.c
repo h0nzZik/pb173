@@ -395,6 +395,7 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 	mod_timer(&data->timer, jiffies + msecs_to_jiffies(10000));
 
 	combo_int_enable(bar0, 0x1000);
+	combo_int_enable(bar0, 0x0100);
 	combo_int_dump(bar0);
 
 
@@ -436,6 +437,7 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 
 error_dma:
 	combo_int_disable(data->bar0, 0x1000);
+	combo_int_disable(data->bar0, 0x0100);
 	del_timer_sync(&data->timer);
 error_req_irq:
 	kfree(data);
@@ -459,6 +461,7 @@ static void my_remove(struct pci_dev *dev)
 
 	dma_free_coherent(&dev->dev, 100, data->dma_virt, data->dma_phys);
 	combo_int_disable(data->bar0, 0x1000);
+	combo_int_disable(data->bar0, 0x0100);
 	del_timer_sync(&data->timer);
 	pr_info("[pb173]\tremoving %x:%x\n", dev->vendor, dev->device);
 	pr_info("[pb173]\tbus no: %x, slot: %x, func: %x\n", dev->bus->number,
