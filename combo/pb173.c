@@ -113,10 +113,10 @@ static void compare_new_devices(void)
 
 /* Combo DMA */
 
-#define BAR0_DMA_SRC		0x0080
-#define BAR0_DMA_DEST		0x0084
-#define BAR0_DMA_NBYTES		0x0088
-#define BAR0_DMA_CMD		0x008C
+#define BAR0_DMA_SRC		0x00000080
+#define BAR0_DMA_DEST		0x00000084
+#define BAR0_DMA_NBYTES		0x00000088
+#define BAR0_DMA_CMD		0x0000008C
 /* commands */ 
 #define BAR0_DMA_CMD_RUN	0x00000001
 #define BAR0_DMA_CMD_SRC(x)	((x&0x07)<<1)
@@ -129,7 +129,7 @@ static void compare_new_devices(void)
 #define COMBO_DMA_PPC		0x4
 
 
-#define COMBO_DMA_PPC_BUFFER	0x40000
+#define COMBO_DMA_PPC_BUFFER	0x00040000
 
 
 static inline long combo_dma_cmd_read(void __iomem *bar0)
@@ -178,11 +178,16 @@ static void combo_dma_transfer_setup(void __iomem *bar0, int src_bus,
 		int dest_bus, int use_ints, dma_addr_t src, dma_addr_t dest, long bytes)
 {
 	long data = combo_dma_cmd_read(bar0);
+	pr_info("old cmd: %x\n", data);
+	data = 0;
 	data |= BAR0_DMA_CMD_SRC(src_bus);
 	data |= BAR0_DMA_CMD_DEST(dest_bus);
 	if (!use_ints)
 		data |= BAR0_DMA_CMD_INT_NO;
-	combo_dma_cmd_write(bar0, data);
+
+	pr_info("new cmd: %x\n", data);
+	writel(data, bar0 + BAR0_DMA_CMD);
+//	combo_dma_cmd_write(bar0, data);
 
 	writel(dest, bar0 + BAR0_DMA_DEST);
 	writel(src,  bar0 + BAR0_DMA_SRC);
@@ -423,7 +428,7 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 	pr_info("</tam>\n");
 	pr_info("<sem>\n");
 
-	combo_dma_transfer_setup(data->bar0, COMBO_DMA_PCI, COMBO_DMA_PPC, 0, COMBO_DMA_PPC_BUFFER, data->dma_phys+strlen(test_string), 10 );
+	combo_dma_transfer_setup(data->bar0, COMBO_DMA_PPC, COMBO_DMA_PCI, 0, COMBO_DMA_PPC_BUFFER, data->dma_phys+strlen(test_string), 10 );
 	combo_dma_transfer_start(data->bar0);
 	combo_dma_transfer_wait(data->bar0);
 
