@@ -132,22 +132,13 @@ static void compare_new_devices(void)
 #define COMBO_DMA_PPC_BUFFER	0x00040000
 
 
-static inline long combo_dma_cmd_read(void __iomem *bar0)
-{
-	return readl(bar0 + BAR0_DMA_CMD);
-}
-
-static inline void combo_dma_cmd_write(void __iomem *bar0, long data)
-{
-	writel(data, bar0 + BAR0_DMA_CMD);
-}
-
 
 static void combo_dma_int_ack(void __iomem *bar0)
 {
-	long data = combo_dma_cmd_read(bar0);
+	long data;
+	data = readl(bar0 + BAR0_DMA_CMD);
 	data |= BAR0_DMA_CMD_INT_ACK;
-	combo_dma_cmd_write(bar0, data);
+	writel(data, bar0 + BAR0_DMA_CMD);
 }
 
 
@@ -155,8 +146,8 @@ static void combo_dma_transfer_start(void __iomem *bar0)
 {
 	long data;
 
-	data = BAR0_DMA_CMD_RUN | combo_dma_cmd_read(bar0);
-	combo_dma_cmd_write(bar0, data);
+	data = BAR0_DMA_CMD_RUN | readl(bar0 + BAR0_DMA_CMD);
+	writel(data, bar0 + BAR0_DMA_CMD);
 }
 
 static void combo_dma_transfer_wait(void __iomem *bar0)
@@ -167,7 +158,7 @@ static void combo_dma_transfer_wait(void __iomem *bar0)
 	i=0;
 	do {
 		msleep(1);
-		data = combo_dma_cmd_read(bar0);
+		data = readl(bar0 + BAR0_DMA_CMD); 
 		i++;
 	} while (data & BAR0_DMA_CMD_RUN && i < 1000);
 
@@ -177,17 +168,16 @@ static void combo_dma_transfer_wait(void __iomem *bar0)
 static void combo_dma_transfer_setup(void __iomem *bar0, int src_bus,
 		int dest_bus, int use_ints, dma_addr_t src, dma_addr_t dest, long bytes)
 {
-	long data = combo_dma_cmd_read(bar0);
-	pr_info("old cmd: %x\n", data);
+	long data;
+	data = readl(bar0 + BAR0_DMA_CMD);
+
 	data = 0;
 	data |= BAR0_DMA_CMD_SRC(src_bus);
 	data |= BAR0_DMA_CMD_DEST(dest_bus);
 	if (!use_ints)
 		data |= BAR0_DMA_CMD_INT_NO;
 
-	pr_info("new cmd: %x\n", data);
 	writel(data, bar0 + BAR0_DMA_CMD);
-//	combo_dma_cmd_write(bar0, data);
 
 	writel(dest, bar0 + BAR0_DMA_DEST);
 	writel(src,  bar0 + BAR0_DMA_SRC);
@@ -216,7 +206,7 @@ struct combo_data{
 	char *dma_virt;
 };
 
-char *test_string = "Comboobmo";
+static char *test_string = "Combo____";
 
 /*	some interrupt functions */
 
@@ -419,29 +409,21 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 	memset(data->dma_virt, 0, 100);
 	strcpy(data->dma_virt, test_string);
 
-	pr_info("<tam>\n");
 
+	/* transfer something to Combo */
 	combo_dma_transfer_setup(data->bar0, COMBO_DMA_PCI, COMBO_DMA_PPC, 0, data->dma_phys, COMBO_DMA_PPC_BUFFER, strlen(test_string) );
 	combo_dma_transfer_start(data->bar0);
 	combo_dma_transfer_wait(data->bar0);
 
-	pr_info("</tam>\n");
-	pr_info("<sem>\n");
-
+	/* transfer it back */
 	combo_dma_transfer_setup(data->bar0, COMBO_DMA_PPC, COMBO_DMA_PCI, 0, COMBO_DMA_PPC_BUFFER, data->dma_phys+strlen(test_string), 10 );
 	combo_dma_transfer_start(data->bar0);
 	combo_dma_transfer_wait(data->bar0);
 
 
-	pr_info("</sem>\n");
 
-	data->dma_virt[10+9]=0;
+	data->dma_virt[strlen(test_string)+9]=0;
 	pr_info("received '%s'\n", data->dma_virt+10);
-
-	int i;
-	for (i=0; i<100; i++) {
-		pr_info("%x\t%c\n", data->dma_virt[i], data->dma_virt[i]);
-	}
 
 	return 0;
 
