@@ -270,6 +270,8 @@ static void combo_handle_dma_interrupt(struct combo_data *combo)
 	} else if (combo->way == 2) {
 	/* finished transfer in */
 		pr_info("finished\n");
+		pr_info("received: '%s'\n", 
+				combo->dma_virt + strlen(combo->dma_virt) + 1);
 		combo->way = 0;
 	} else {
 		pr_info("[pb173]\tunknown transfer way\n");
@@ -394,7 +396,7 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 	void __iomem *bar0;
 	struct combo_data *data;
 
-	pr_info("[pb173]\tnew device: %02x:%02x\n", dev_id->vendor, dev_id->device);
+	pr_info("[pb173]\t***\tnew device: %02x:%02x\t***\n", dev_id->vendor, dev_id->device);
 	pr_info("[pb173]\tbus no: %x, slot: %x, func: %x\n", dev->bus->number,
 			PCI_SLOT(dev->devfn), PCI_FUNC(dev->devfn));
 
@@ -503,6 +505,7 @@ static void my_remove(struct pci_dev *dev)
 	kfree(data);
 	pci_release_region(dev, 0);
 	pci_disable_device(dev);
+	pr_info("[pb173]\t*** removed ***\n");
 }
 
 static struct pci_device_id id_table[] = {
