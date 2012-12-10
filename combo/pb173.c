@@ -118,9 +118,9 @@ static void compare_new_devices(void)
 #define BAR0_DMA_NBYTES		0x0088
 #define BAR0_DMA_CMD		0x008C
 /* commands */ 
-#define BAR0_DMA_CMD_RUN	0x0001
-#define BAR0_DMA_CMD_SRC(x)	((x&0x03)<<1)
-#define BAR0_DMA_CMD_DEST(x)	((x&0x03)<<4)
+#define BAR0_DMA_CMD_RUN	0x00000001
+#define BAR0_DMA_CMD_SRC(x)	((x&0x07)<<1)
+#define BAR0_DMA_CMD_DEST(x)	((x&0x07)<<4)
 #define BAR0_DMA_CMD_INT_NO	0x00000080
 #define BAR0_DMA_CMD_INT_ACK	0x80000000
 
@@ -423,15 +423,15 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 	pr_info("</tam>\n");
 	pr_info("<sem>\n");
 
-	combo_dma_transfer_setup(data->bar0, COMBO_DMA_PCI, COMBO_DMA_PPC, 0, COMBO_DMA_PPC_BUFFER, data->dma_phys+10, 10 );
+	combo_dma_transfer_setup(data->bar0, COMBO_DMA_PCI, COMBO_DMA_PPC, 0, COMBO_DMA_PPC_BUFFER, data->dma_phys+strlen(test_string), 10 );
 	combo_dma_transfer_start(data->bar0);
 	combo_dma_transfer_wait(data->bar0);
 
 
 	pr_info("</sem>\n");
 
-	((char *)data->dma_virt)[10+9]=0;
-	pr_info("received '%s'\n", ((char *)data->dma_virt)+10);
+	data->dma_virt[10+9]=0;
+	pr_info("received '%s'\n", data->dma_virt+10);
 
 	int i;
 	for (i=0; i<100; i++) {
