@@ -109,7 +109,7 @@ static void compare_new_devices(void)
 
 #endif
 
-
+/* DMA handling functions */
 
 static void combo_dma_int_ack(void __iomem *bar0)
 {
@@ -164,156 +164,6 @@ static void combo_dma_transfer_setup(void __iomem *bar0, int use_ints,
 
 
 
-
-
-/*	some interrupt functions */
-
-static void combo_int_dump(const void __iomem *bar0)
-{
-	int r, e;
-
-	r = readl(bar0 + BAR0_INT_RAISED);
-	e = readl(bar0 + BAR0_INT_ENABLED);
-
-	pr_info("[pb071]\tints raised: 0x%x, enabled: 0x%x\n", r, e);
-}
-
-static inline void combo_int_set_enabled(void __iomem *bar0, unsigned enabled)
-{
-	writel(enabled, bar0 + BAR0_INT_ENABLED);
-}
-
-static inline unsigned combo_int_get_enabled(void __iomem *bar0)
-{
-	return readl(bar0 + BAR0_INT_ENABLED);
-}
-
-static inline void combo_int_enable(void __iomem *bar0, unsigned int_no)
-{
-	unsigned enabled;
-
-	enabled = int_no | combo_int_get_enabled(bar0);
-	combo_int_set_enabled(bar0, enabled);
-}
-
-static inline void combo_int_disable(void __iomem *bar0, unsigned int_no)
-{
-	unsigned enabled;
-
-	enabled = ~int_no & combo_int_get_enabled(bar0);
-	combo_int_set_enabled(bar0, enabled);
-}
-
-static inline void combo_int_trigger(void __iomem *bar0, unsigned int_no)
-{
-	writel(int_no, bar0 + BAR0_INT_TRIGGER);
-}
-
-static inline void combo_int_clear(void __iomem *bar0, unsigned int_no)
-{
-	writel(int_no, bar0 + BAR0_INT_ACK);
-}
-
-
-static inline unsigned combo_int_get_raised(void __iomem *bar0)
-{
-	return readl(bar0 + BAR0_INT_RAISED);
-}
-
-static void combo_print_build_info(void __iomem *bar0)
-{
-	/* id, revision, build date */
-	int idrev;
-	int id, rev;
-	int btime;
-	int y,m,dd,hh,mm;
-
-	/* read built time and print it */
-	btime = readl(bar0 + BAR0_BRIDGE_BUILD_DATE);
-
-	mm = ((btime >>  0) & 0x0F) + 10 * ((btime >>  4) & 0x0F);
-	hh = ((btime >>  8) & 0x0F) + 10 * ((btime >> 12) & 0x0F);
-	dd = ((btime >> 16) & 0x0F) + 10 * ((btime >> 20) & 0x0F);
-	m = (btime >> 24) & 0x0F;
-	y = (btime >> 28) & 0x0F;
-
-	pr_info("[[b173]\tbuilt: %d. of %d 200%d at %d:%d\n", dd, m, y, hh, m);
-
-	/* read ID, revision & print it */
-	idrev = readl(bar0 + BAR0_BRIDGE_ID_REV);
-
-	id = (idrev >> 16) & 0xFFFF;
-	rev = idrev & 0xFFFF;
-
-	pr_info("[pb173]\tid: %x, rev: %x\n", id, rev);
-}
-
-
-/* interval timer */
-static void combo_timer_function(unsigned long combo_data)
-{
-	struct combo_data *data = (void *)combo_data;
-	pr_info("[pb173]\tgoing to trigger int 0x1000 (at %lu pm ;))\n", jiffies);
-	mod_timer(&data->timer, jiffies + msecs_to_jiffies(1000));
-	combo_int_trigger(data->bar0, 0x1000);
-}
-
-static void test_transfer_int_in(struct combo_data *combo);
-
-static void combo_handle_dma_interrupt(struct combo_data *combo)
-{
-	combo_dma_int_ack(combo->bar0);
-
-	if (combo->way == 1) {
-	/* transfer out finished */
-		test_transfer_int_in(combo);
-	} else if (combo->way == 2) {
-	/* finished transfer in */
-		pr_info("finished\n");
-		pr_info("received: '%s'\n", combo->dma_virt + 30);
-		combo->way = 0;
-	} else {
-		pr_info("[pb173]\tunknown transfer way\n");
-	}
-}
-
-static void combo_do_interrupt(int irq, struct combo_data *data, struct pt_regs *regs, int int_no)
-{
-	combo_int_dump(data->bar0);
-	pr_info("[pb173]\tinterrupt 0x%x on irq %d, jiffies == %lu\n", int_no, irq, jiffies);
-
-	switch (int_no) {
-		case COMBO_INT_DMA:
-			pr_info("interrupt from DMA\n");
-			combo_handle_dma_interrupt(data);
-			break;
-		default:
-			break;
-	}
-}
-
-static irqreturn_t combo_irq_handler (int irq, void *combo_data, struct pt_regs *regs)
-{
-	struct combo_data *data;
-	unsigned ints;
-	int which;
-	data = combo_data;
-
-
-	ints = combo_int_get_raised(data->bar0);
-
-	if (ints == 0) {
-		pr_info("[pb173]\tinterrupt.. but wait. what interrupt? %lu\n", jiffies); // 
-		return IRQ_NONE;
-	}
-	which = find_first_bit((unsigned long *)&ints, sizeof(ints)*8);	// je toto ok? s tim pretypovanim..
-
-	combo_do_interrupt(irq, data, regs, which);
-	combo_int_clear(data->bar0, 1<<which);
-
-
-	return IRQ_HANDLED;
-}
 
 static void test_transfer_noint(struct combo_data *combo)
 {
@@ -386,6 +236,162 @@ static void test_transfer_int_out(struct combo_data *combo)
 }
 
 
+/*	some interrupt functions */
+
+static void combo_int_dump(const void __iomem *bar0)
+{
+	int r, e;
+
+	r = readl(bar0 + BAR0_INT_RAISED);
+	e = readl(bar0 + BAR0_INT_ENABLED);
+
+	pr_info("[pb071]\tints raised: 0x%x, enabled: 0x%x\n", r, e);
+}
+
+static inline void combo_int_set_enabled(void __iomem *bar0, unsigned enabled)
+{
+	writel(enabled, bar0 + BAR0_INT_ENABLED);
+}
+
+static inline unsigned combo_int_get_enabled(void __iomem *bar0)
+{
+	return readl(bar0 + BAR0_INT_ENABLED);
+}
+
+static inline void combo_int_enable(void __iomem *bar0, unsigned int_no)
+{
+	unsigned enabled;
+
+	enabled = int_no | combo_int_get_enabled(bar0);
+	combo_int_set_enabled(bar0, enabled);
+}
+
+static inline void combo_int_disable(void __iomem *bar0, unsigned int_no)
+{
+	unsigned enabled;
+
+	enabled = ~int_no & combo_int_get_enabled(bar0);
+	combo_int_set_enabled(bar0, enabled);
+}
+
+static inline void combo_int_trigger(void __iomem *bar0, unsigned int_no)
+{
+	writel(int_no, bar0 + BAR0_INT_TRIGGER);
+}
+
+static inline void combo_int_clear(void __iomem *bar0, unsigned int_no)
+{
+	writel(int_no, bar0 + BAR0_INT_ACK);
+}
+
+
+static inline unsigned combo_int_get_raised(void __iomem *bar0)
+{
+	return readl(bar0 + BAR0_INT_RAISED);
+}
+#if 0
+static void combo_print_build_info(void __iomem *bar0)
+{
+	/* id, revision, build date */
+	int idrev;
+	int id, rev;
+	int btime;
+	int y,m,dd,hh,mm;
+
+	/* read built time and print it */
+	btime = readl(bar0 + BAR0_BRIDGE_BUILD_DATE);
+
+	mm = ((btime >>  0) & 0x0F) + 10 * ((btime >>  4) & 0x0F);
+	hh = ((btime >>  8) & 0x0F) + 10 * ((btime >> 12) & 0x0F);
+	dd = ((btime >> 16) & 0x0F) + 10 * ((btime >> 20) & 0x0F);
+	m = (btime >> 24) & 0x0F;
+	y = (btime >> 28) & 0x0F;
+
+	pr_info("[[b173]\tbuilt: %d. of %d 200%d at %d:%d\n", dd, m, y, hh, m);
+
+	/* read ID, revision & print it */
+	idrev = readl(bar0 + BAR0_BRIDGE_ID_REV);
+
+	id = (idrev >> 16) & 0xFFFF;
+	rev = idrev & 0xFFFF;
+
+	pr_info("[pb173]\tid: %x, rev: %x\n", id, rev);
+}
+#endif
+
+/* interval timer */
+static void combo_timer_function(unsigned long combo_data)
+{
+	struct combo_data *data = (void *)combo_data;
+	pr_info("[pb173]\tgoing to trigger int 0x1000 (at %lu pm ;))\n", jiffies);
+	mod_timer(&data->timer, jiffies + msecs_to_jiffies(1000));
+	combo_int_trigger(data->bar0, 0x1000);
+}
+
+
+static void combo_interrupt_tasklet(unsigned long data)
+{
+	struct combo_data *combo;
+	combo = (struct combo_data *)data;
+	combo->dma_virt[40]='\0';
+	pr_info("[tasklet]\treceived: '%s'\n", combo->dma_virt + 30);
+}
+
+static void combo_handle_dma_interrupt(struct combo_data *combo)
+{
+	combo_dma_int_ack(combo->bar0);
+
+	if (combo->way == 1) {
+	/* transfer out finished */
+		test_transfer_int_in(combo);
+	} else if (combo->way == 2) {
+	/* finished transfer in */
+		tasklet_schedule(&combo->tasklet);
+		combo->way = 0;
+	} else {
+		pr_info("[pb173]\tunknown transfer way\n");
+	}
+}
+
+static void combo_do_interrupt(int irq, struct combo_data *data, struct pt_regs *regs, int int_no)
+{
+	combo_int_dump(data->bar0);
+	pr_info("[pb173]\tinterrupt 0x%x on irq %d, jiffies == %lu\n", int_no, irq, jiffies);
+
+	switch (int_no) {
+		case COMBO_INT_DMA:
+			pr_info("interrupt from DMA\n");
+			combo_handle_dma_interrupt(data);
+			break;
+		default:
+			break;
+	}
+}
+
+static irqreturn_t combo_irq_handler (int irq, void *combo_data, struct pt_regs *regs)
+{
+	struct combo_data *data;
+	unsigned ints;
+	int which;
+	data = combo_data;
+
+
+	ints = combo_int_get_raised(data->bar0);
+
+	if (ints == 0) {
+		pr_info("[pb173]\tinterrupt.. but wait. what interrupt? %lu\n", jiffies); // 
+		return IRQ_NONE;
+	}
+	which = find_first_bit((unsigned long *)&ints, sizeof(ints)*8);	// je toto ok? s tim pretypovanim..
+
+	combo_do_interrupt(irq, data, regs, which);
+	combo_int_clear(data->bar0, 1<<which);
+
+
+	return IRQ_HANDLED;
+}
+
+
 static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 {
 	int rv;
@@ -453,8 +459,12 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 	data->dma_virt = dma_alloc_coherent(&dev->dev, data->dma_nb, &data->dma_phys, GFP_KERNEL);
 	if (!data->dma_virt)
 		goto error_dma;
-
 	data->way = 0; /* we don't use interrupts */
+
+	/* tasklet */
+	tasklet_init(&data->tasklet, combo_interrupt_tasklet, (unsigned long)data);
+	
+	/* test noint */
 	test_transfer_noint(data);
 
 
@@ -486,6 +496,8 @@ static void my_remove(struct pci_dev *dev)
 
 
 	data = pci_get_drvdata(dev);
+
+	tasklet_kill(&data->tasklet);
 
 	dma_free_coherent(&dev->dev, 100, data->dma_virt, data->dma_phys);
 	combo_int_disable(data->bar0, 0x1000);

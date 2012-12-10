@@ -1,6 +1,8 @@
 #ifndef __PB173_COMBO_H_
 #define __PB173_COMBO_H_
 
+#include <linux/interrupt.h>
+
 #define COMBO_VENDOR	0x18ec
 #define COMBO_DEVICE	0xc058
 
@@ -53,6 +55,9 @@ struct combo_data {
 
 	/* use only using interrupts */
 	int way;	/* 1 == out, 2 == in */
+
+	struct tasklet_struct tasklet;
+
 };
 
 
