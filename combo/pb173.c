@@ -11,9 +11,7 @@
 #include <linux/bitmap.h>
 
 
-
-#define COMBO_VENDOR	0x18ec
-#define COMBO_DEVICE	0xc058
+#include "combo.h"
 
 /* some old stuff we can hide */
 #if 0
@@ -111,26 +109,6 @@ static void compare_new_devices(void)
 
 #endif
 
-/* Combo DMA */
-
-#define BAR0_DMA_SRC		0x00000080
-#define BAR0_DMA_DEST		0x00000084
-#define BAR0_DMA_NBYTES		0x00000088
-#define BAR0_DMA_CMD		0x0000008C
-/* commands */ 
-#define BAR0_DMA_CMD_RUN	0x00000001
-#define BAR0_DMA_CMD_SRC(x)	((x&0x07)<<1)
-#define BAR0_DMA_CMD_DEST(x)	((x&0x07)<<4)
-#define BAR0_DMA_CMD_INT_NO	0x00000080
-#define BAR0_DMA_CMD_INT_ACK	0x80000000
-
-#define COMBO_DMA_LOCALBUS	0x1
-#define COMBO_DMA_PCI		0x2
-#define COMBO_DMA_PPC		0x4
-
-
-#define COMBO_DMA_PPC_BUFFER	0x00040000
-
 
 
 static void combo_dma_int_ack(void __iomem *bar0)
@@ -185,26 +163,7 @@ static void combo_dma_transfer_setup(void __iomem *bar0, int src_bus,
 }
 
 
-/* combo interrupts */
-#define BAR0_BRIDGE_ID_REV	0x0000
-#define BAR0_BRIDGE_BUILD_DATE	0x0004
-#define BAR0_INT_RAISED		0x0040
-#define BAR0_INT_ENABLED	0x0044
-#define BAR0_INT_TRIGGER	0x0060
-#define BAR0_INT_ACK		0x0064
 
-
-
-/* interrupt numbers */
-#define COMBO_INT_DMA		0x08
-
-struct combo_data{
-	void __iomem *bar0;
-	struct timer_list timer;
-
-	dma_addr_t dma_phys;
-	char *dma_virt;
-};
 
 static char *test_string = "Combo____";
 
