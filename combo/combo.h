@@ -45,8 +45,14 @@ struct combo_data {
 	void __iomem *bar0;
 	struct timer_list timer;
 
+	/* some dma-mapped memory */
+	size_t dma_nb;
 	dma_addr_t dma_phys;
 	char *dma_virt;
+	size_t dma_int_off;	/* data offset */
+
+	/* use only using interrupts */
+	int way;	/* 1 == out, 2 == in */
 };
 
 
