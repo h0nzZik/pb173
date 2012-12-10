@@ -143,8 +143,8 @@ static void combo_dma_transfer_wait(void __iomem *bar0)
 	pr_info("[pb173]\ttransfer: %d miliseconds\n", i);
 }
 
-static void combo_dma_transfer_setup(void __iomem *bar0, int src_bus,
-		int dest_bus, int use_ints, dma_addr_t src, dma_addr_t dest, long bytes)
+static void combo_dma_transfer_setup(void __iomem *bar0, int use_ints,
+		int src_bus, int dest_bus, dma_addr_t src, dma_addr_t dest, long bytes)
 {
 	long data;
 	data = readl(bar0 + BAR0_DMA_CMD);
@@ -165,7 +165,6 @@ static void combo_dma_transfer_setup(void __iomem *bar0, int src_bus,
 
 
 
-static char *test_string = "Combo____";
 
 /*	some interrupt functions */
 
@@ -259,6 +258,23 @@ static void combo_timer_function(unsigned long combo_data)
 	combo_int_trigger(data->bar0, 0x1000);
 }
 
+static void test_transfer_int_in(struct combo_data *combo);
+
+static void combo_handle_dma_interrupt(struct combo_data *combo)
+{
+	combo_dma_int_ack(combo->bar0);
+
+	if (combo->way == 1) {
+	/* transfer out finished */
+		test_transfer_int_in(combo);
+	} else if (combo->way == 2) {
+	/* finished transfer in */
+		pr_info("finished\n");
+		combo->way = 0;
+	} else {
+		pr_info("[pb173]\tunknown transfer way\n");
+	}
+}
 
 static void combo_do_interrupt(int irq, struct combo_data *data, struct pt_regs *regs, int int_no)
 {
@@ -268,7 +284,7 @@ static void combo_do_interrupt(int irq, struct combo_data *data, struct pt_regs 
 	switch (int_no) {
 		case COMBO_INT_DMA:
 			pr_info("interrupt from DMA\n");
-			combo_dma_int_ack(data->bar0);
+			combo_handle_dma_interrupt(data);
 			break;
 		default:
 			break;
@@ -297,6 +313,80 @@ static irqreturn_t combo_irq_handler (int irq, void *combo_data, struct pt_regs 
 
 	return IRQ_HANDLED;
 }
+
+static void test_transfer_noint(struct combo_data *combo)
+{
+	static char *test_string = "Combo____";
+
+	/* clear buffer */
+	memset(combo->dma_virt, 0, combo->dma_nb);
+	strcpy(combo->dma_virt, test_string);
+
+	/* transfer string to memory inside PPC uc */
+	combo_dma_transfer_setup(combo->bar0, 0,
+			COMBO_DMA_PCI,
+			COMBO_DMA_PPC,
+			combo->dma_phys,
+			COMBO_DMA_PPC_BUFFER,
+			strlen(test_string));
+
+	combo_dma_transfer_start(combo->bar0);
+	combo_dma_transfer_wait(combo->bar0);
+
+	/* transfer it back */
+	combo_dma_transfer_setup(combo->bar0, 0,
+			COMBO_DMA_PPC,
+			COMBO_DMA_PCI,
+			COMBO_DMA_PPC_BUFFER,
+			combo->dma_phys + strlen(test_string) + 1,
+			10);
+	combo_dma_transfer_start(combo->bar0);
+	combo_dma_transfer_wait(combo->bar0);
+
+	combo->dma_virt[strlen(test_string) + 1 + 10] = 0;
+	pr_info("received '%s'\n", combo->dma_virt+strlen(test_string) + 1);
+}
+
+
+static void test_transfer_int_in(struct combo_data *combo)
+{
+	int len;
+
+	pr_info("transfering in\n");
+	len = strlen(combo->dma_virt);
+
+	/* transfer string from memory inside PPC uc */
+	combo_dma_transfer_setup(combo->bar0, 1,
+			COMBO_DMA_PPC,
+			COMBO_DMA_PCI,
+			COMBO_DMA_PPC_BUFFER,
+			combo->dma_phys + len + 1,
+			10);
+
+	combo->way = 2; /* transfering in */
+	combo_dma_transfer_start(combo->bar0);
+}
+
+static void test_transfer_int_out(struct combo_data *combo)
+{
+	static char *test_string = "Interrupts_";
+
+	pr_info("transfering out\n");
+	memset(combo->dma_virt, 0, combo->dma_nb);
+	strcpy(combo->dma_virt, test_string);
+
+	/* transfer string to memory inside PPC uc */
+	combo_dma_transfer_setup(combo->bar0, 1,
+			COMBO_DMA_PCI,
+			COMBO_DMA_PPC,
+			combo->dma_phys,
+			COMBO_DMA_PPC_BUFFER,
+			strlen(test_string));
+
+	combo->way = 1;	/* transfering out */
+	combo_dma_transfer_start(combo->bar0);
+}
+
 
 static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 {
@@ -354,35 +444,24 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 
 
 
-	/* do DMA */
+	/* setup DMA */
 	rv = pci_set_dma_mask(dev, DMA_BIT_MASK(32));
 	if (rv)
 		goto error_dma;
 
 	pci_set_master(dev);
 
-	data->dma_virt = dma_alloc_coherent(&dev->dev, 100, &data->dma_phys, GFP_KERNEL);
-	if (!data->dma_virt) {
+	data->dma_nb = 100;
+	data->dma_virt = dma_alloc_coherent(&dev->dev, data->dma_nb, &data->dma_phys, GFP_KERNEL);
+	if (!data->dma_virt)
 		goto error_dma;
-	}
-	memset(data->dma_virt, 0, 100);
-	strcpy(data->dma_virt, test_string);
+
+	data->way = 0; /* we don't use interrupts */
+	test_transfer_noint(data);
 
 
-	/* transfer something to Combo */
-	combo_dma_transfer_setup(data->bar0, COMBO_DMA_PCI, COMBO_DMA_PPC, 0, data->dma_phys, COMBO_DMA_PPC_BUFFER, strlen(test_string) );
-	combo_dma_transfer_start(data->bar0);
-	combo_dma_transfer_wait(data->bar0);
-
-	/* transfer it back */
-	combo_dma_transfer_setup(data->bar0, COMBO_DMA_PPC, COMBO_DMA_PCI, 0, COMBO_DMA_PPC_BUFFER, data->dma_phys+strlen(test_string)+1, 10 );
-	combo_dma_transfer_start(data->bar0);
-	combo_dma_transfer_wait(data->bar0);
-
-
-
-	data->dma_virt[strlen(test_string) +1 + 10] = 0;
-	pr_info("received '%s'\n", data->dma_virt+strlen(test_string) + 1);
+	/* test ints */
+	test_transfer_int_out(data);
 
 	return 0;
 
