@@ -270,8 +270,7 @@ static void combo_handle_dma_interrupt(struct combo_data *combo)
 	} else if (combo->way == 2) {
 	/* finished transfer in */
 		pr_info("finished\n");
-		pr_info("received: '%s'\n", 
-				combo->dma_virt + strlen(combo->dma_virt) + 1);
+		pr_info("received: '%s'\n", combo->dma_virt + 30);
 		combo->way = 0;
 	} else {
 		pr_info("[pb173]\tunknown transfer way\n");
@@ -352,17 +351,14 @@ static void test_transfer_noint(struct combo_data *combo)
 
 static void test_transfer_int_in(struct combo_data *combo)
 {
-	int len;
-
 	pr_info("transfering in\n");
-	len = strlen(combo->dma_virt);
 
 	/* transfer string from memory inside PPC uc */
 	combo_dma_transfer_setup(combo->bar0, 1,
 			COMBO_DMA_PPC,
 			COMBO_DMA_PCI,
 			COMBO_DMA_PPC_BUFFER,
-			combo->dma_phys + len + 1,
+			combo->dma_phys + 30, 
 			10);
 
 	combo->way = 2; /* transfering in */
