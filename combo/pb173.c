@@ -208,7 +208,7 @@ struct combo_data{
 	struct timer_list timer;
 
 	dma_addr_t dma_phys;
-	void *dma_virt;
+	char *dma_virt;
 };
 
 char *test_string = "Comboobmo";
@@ -431,7 +431,12 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 	pr_info("</sem>\n");
 
 	((char *)data->dma_virt)[10+9]=0;
-	pr_info("received '%s'\n", data->dma_virt+10);
+	pr_info("received '%s'\n", ((char *)data->dma_virt)+10);
+
+	int i;
+	for (i=0; i<100; i++) {
+		pr_info("%x\t%c\n", data->dma_virt[i], data->dma_virt[i]);
+	}
 
 	return 0;
 
