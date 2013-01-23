@@ -1,8 +1,8 @@
 KDIR=/lib/modules/$(shell uname -r)/build
 KBUILD=$(MAKE) -C $(KDIR) M=$(PWD)
 
-obj-m := pb173.o 
-
+obj-m := pb.o
+pb-y := pb173.o
 modules:
 	$(KBUILD) modules
 

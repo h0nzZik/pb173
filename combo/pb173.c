@@ -9,6 +9,8 @@
 #include <linux/interrupt.h>
 #include <linux/timer.h>
 #include <linux/bitmap.h>
+#include <linux/fs.h>
+#include <linux/miscdevice.h>
 
 
 #include "combo.h"
@@ -108,146 +110,6 @@ static void compare_new_devices(void)
 }
 
 #endif
-
-/* DMA handling functions */
-
-static void combo_dma_int_ack(void __iomem *bar0)
-{
-	long data;
-	data = readl(bar0 + BAR0_DMA_CMD);
-	data |= BAR0_DMA_CMD_INT_ACK;
-	writel(data, bar0 + BAR0_DMA_CMD);
-}
-
-
-static void combo_dma_transfer_start(void __iomem *bar0)
-{
-	long data;
-
-	data = BAR0_DMA_CMD_RUN | readl(bar0 + BAR0_DMA_CMD);
-	writel(data, bar0 + BAR0_DMA_CMD);
-}
-
-static void combo_dma_transfer_wait(void __iomem *bar0)
-{
-	long data;
-	int i;
-
-	i=0;
-	do {
-		msleep(1);
-		data = readl(bar0 + BAR0_DMA_CMD); 
-		i++;
-	} while (data & BAR0_DMA_CMD_RUN && i < 1000);
-
-	pr_info("[pb173]\ttransfer: %d miliseconds\n", i);
-}
-
-static void combo_dma_transfer_setup(void __iomem *bar0, int use_ints,
-		int src_bus, int dest_bus, dma_addr_t src, dma_addr_t dest, long bytes)
-{
-	long data;
-	data = readl(bar0 + BAR0_DMA_CMD);
-
-	data = 0;
-	data |= BAR0_DMA_CMD_SRC(src_bus);
-	data |= BAR0_DMA_CMD_DEST(dest_bus);
-	if (!use_ints)
-		data |= BAR0_DMA_CMD_INT_NO;
-
-	writel(data, bar0 + BAR0_DMA_CMD);
-
-	writel(dest, bar0 + BAR0_DMA_DEST);
-	writel(src,  bar0 + BAR0_DMA_SRC);
-	writel(bytes,bar0 + BAR0_DMA_NBYTES);
-}
-
-
-
-
-static void test_transfer_noint(struct combo_data *combo)
-{
-	static char *test_string = "Combo____";
-
-	/* clear buffer */
-	memset(combo->dma_virt, 0, combo->dma_nb);
-	strcpy(combo->dma_virt, test_string);
-
-	/* transfer string to memory inside PPC uc */
-	combo_dma_transfer_setup(combo->bar0, 0,
-			COMBO_DMA_PCI,
-			COMBO_DMA_PPC,
-			combo->dma_phys,
-			COMBO_DMA_PPC_BUFFER,
-			strlen(test_string));
-
-	combo_dma_transfer_start(combo->bar0);
-	combo_dma_transfer_wait(combo->bar0);
-
-	/* transfer it back */
-	combo_dma_transfer_setup(combo->bar0, 0,
-			COMBO_DMA_PPC,
-			COMBO_DMA_PCI,
-			COMBO_DMA_PPC_BUFFER,
-			combo->dma_phys + strlen(test_string) + 1,
-			10);
-	combo_dma_transfer_start(combo->bar0);
-	combo_dma_transfer_wait(combo->bar0);
-
-	combo->dma_virt[strlen(test_string) + 1 + 10] = 0;
-	pr_info("received '%s'\n", combo->dma_virt+strlen(test_string) + 1);
-}
-
-
-static void test_transfer_int_in(struct combo_data *combo)
-{
-	pr_info("transfering in\n");
-
-	/* transfer string from memory inside PPC uc */
-	combo_dma_transfer_setup(combo->bar0, 1,
-			COMBO_DMA_PPC,
-			COMBO_DMA_PCI,
-			COMBO_DMA_PPC_BUFFER,
-			combo->dma_phys + 30, 
-			10);
-
-	combo->way = 2; /* transfering in */
-	combo_dma_transfer_start(combo->bar0);
-}
-
-static void test_transfer_int_out(struct combo_data *combo)
-{
-	static char *test_string = "Interrupts_";
-
-	pr_info("transfering out\n");
-	memset(combo->dma_virt, 0, combo->dma_nb);
-	strcpy(combo->dma_virt, test_string);
-
-	/* transfer string to memory inside PPC uc */
-	combo_dma_transfer_setup(combo->bar0, 1,
-			COMBO_DMA_PCI,
-			COMBO_DMA_PPC,
-			combo->dma_phys,
-			COMBO_DMA_PPC_BUFFER,
-			strlen(test_string));
-
-	combo->way = 1;	/* transfering out */
-	combo_dma_transfer_start(combo->bar0);
-}
-
-
-/*	some interrupt functions */
-
-static void combo_int_dump(const void __iomem *bar0)
-{
-	int r, e;
-
-	r = readl(bar0 + BAR0_INT_RAISED);
-	e = readl(bar0 + BAR0_INT_ENABLED);
-
-	pr_info("[pb071]\tints raised: 0x%x, enabled: 0x%x\n", r, e);
-}
-
 static inline void combo_int_set_enabled(void __iomem *bar0, unsigned enabled)
 {
 	writel(enabled, bar0 + BAR0_INT_ENABLED);
@@ -289,6 +151,145 @@ static inline unsigned combo_int_get_raised(void __iomem *bar0)
 {
 	return readl(bar0 + BAR0_INT_RAISED);
 }
+/* DMA handling functions */
+
+static void combo_dma_int_ack(void __iomem *bar0)
+{
+	long data;
+	data = readl(bar0 + BAR0_DMA_CMD);
+	data |= BAR0_DMA_CMD_INT_ACK;
+	writel(data, bar0 + BAR0_DMA_CMD);
+}
+
+
+static void combo_dma_transfer_start(void __iomem *bar0, int use_ints)
+{
+	long data;
+
+	data = BAR0_DMA_CMD_RUN | readl(bar0 + BAR0_DMA_CMD);
+	if (!use_ints)
+		data |= BAR0_DMA_CMD_INT_NO;
+	writel(data, bar0 + BAR0_DMA_CMD);
+}
+
+static void combo_dma_transfer_wait(void __iomem *bar0)
+{
+	long data;
+	int i;
+
+	i=0;
+	do {
+		msleep(1);
+		data = readl(bar0 + BAR0_DMA_CMD); 
+		i++;
+	} while (data & BAR0_DMA_CMD_RUN && i < 1000);
+
+	pr_info("[pb173]\ttransfer: %d miliseconds\n", i);
+}
+
+static void combo_dma_transfer_setup(void __iomem *bar0, 
+		int src_bus, int dest_bus, dma_addr_t src, dma_addr_t dest, long bytes)
+{
+	long data;
+	data = readl(bar0 + BAR0_DMA_CMD);
+
+	data = 0;
+	data |= BAR0_DMA_CMD_SRC(src_bus);
+	data |= BAR0_DMA_CMD_DEST(dest_bus);
+
+	writel(data, bar0 + BAR0_DMA_CMD);
+
+	writel(dest, bar0 + BAR0_DMA_DEST);
+	writel(src,  bar0 + BAR0_DMA_SRC);
+	writel(bytes,bar0 + BAR0_DMA_NBYTES);
+}
+
+
+
+
+static void test_transfer_noint(struct combo_data *combo)
+{
+	static char *test_string = "Combo____";
+
+	/* clear buffer */
+	memset(combo->dma_virt, 0, combo->dma_nb);
+	strcpy(combo->dma_virt, test_string);
+
+	/* transfer string to memory inside PPC uc */
+	combo_dma_transfer_setup(combo->bar0,
+			COMBO_DMA_PCI,
+			COMBO_DMA_PPC,
+			combo->dma_phys,
+			COMBO_DMA_PPC_BUFFER,
+			strlen(test_string));
+
+	combo_dma_transfer_start(combo->bar0, 0);
+	combo_dma_transfer_wait(combo->bar0);
+
+	/* transfer it back */
+	combo_dma_transfer_setup(combo->bar0,
+			COMBO_DMA_PPC,
+			COMBO_DMA_PCI,
+			COMBO_DMA_PPC_BUFFER,
+			combo->dma_phys + strlen(test_string) + 1,
+			10);
+	combo_dma_transfer_start(combo->bar0, 0);
+	combo_dma_transfer_wait(combo->bar0);
+
+	combo->dma_virt[strlen(test_string) + 1 + 10] = 0;
+	pr_info("received '%s'\n", combo->dma_virt+strlen(test_string) + 1);
+}
+
+
+static void test_transfer_int_in(struct combo_data *combo)
+{
+	pr_info("transfering in\n");
+
+	/* transfer string from memory inside PPC uc */
+	combo_dma_transfer_setup(combo->bar0,
+			COMBO_DMA_PPC,
+			COMBO_DMA_PCI,
+			COMBO_DMA_PPC_BUFFER,
+			combo->dma_phys + 30, 
+			10);
+
+	combo->way = 2; /* transfering in */
+	combo_dma_transfer_start(combo->bar0, 1);
+}
+
+static void test_transfer_int_out(struct combo_data *combo)
+{
+	static char *test_string = "Interrupts_";
+
+	pr_info("transfering out\n");
+	memset(combo->dma_virt, 0, combo->dma_nb);
+	strcpy(combo->dma_virt, test_string);
+
+	/* transfer string to memory inside PPC uc */
+	combo_dma_transfer_setup(combo->bar0,
+			COMBO_DMA_PCI,
+			COMBO_DMA_PPC,
+			combo->dma_phys,
+			COMBO_DMA_PPC_BUFFER,
+			strlen(test_string));
+
+	combo->way = 1;	/* transfering out */
+	combo_dma_transfer_start(combo->bar0, 1);
+}
+
+
+/*	some interrupt functions */
+
+static void combo_int_dump(const void __iomem *bar0)
+{
+	int r, e;
+
+	r = readl(bar0 + BAR0_INT_RAISED);
+	e = readl(bar0 + BAR0_INT_ENABLED);
+
+	pr_info("[pb071]\tints raised: 0x%x, enabled: 0x%x\n", r, e);
+}
+
 #if 0
 static void combo_print_build_info(void __iomem *bar0)
 {
@@ -391,6 +392,39 @@ static irqreturn_t combo_irq_handler (int irq, void *combo_data, struct pt_regs 
 	return IRQ_HANDLED;
 }
 
+/* /dev device */
+static atomic_t miscdev_in_use = ATOMIC_INIT(0);
+static struct combo_data *miscdev_combo_data;
+
+static int combo_mmap(struct file *filp, struct vm_area_struct *vma)
+{
+	int rv;
+
+	/* hope that ioremap() returns physical address */
+	rv = remap_pfn_range(vma, vma->vm_start,
+			virt_to_phys(miscdev_combo_data->dma_virt) >> PAGE_SHIFT,
+			PAGE_SIZE, vma->vm_page_prot);
+	if (rv)
+		pr_info("[pb173]\tmmap(): remap_pfn_range() failed\n");
+	return rv;
+}
+
+
+static struct file_operations combo_fops = {
+	.owner = THIS_MODULE,
+	.mmap = combo_mmap,
+};
+
+
+static struct miscdevice combo_misc = {
+	.minor = MISC_DYNAMIC_MINOR,
+	.name = "combo_dma",
+	.fops = &combo_fops,
+	.nodename = "combo_dma_name",
+	.mode = 0666,
+};
+
+
 
 static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 {
@@ -401,6 +435,14 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 	pr_info("[pb173]\t***\tnew device: %02x:%02x\t***\n", dev_id->vendor, dev_id->device);
 	pr_info("[pb173]\tbus no: %x, slot: %x, func: %x\n", dev->bus->number,
 			PCI_SLOT(dev->devfn), PCI_FUNC(dev->devfn));
+
+
+	/* in use? */
+	if (atomic_inc_return(&miscdev_in_use) != 1) {
+		atomic_dec(&miscdev_in_use);
+		pr_info("[pb173]\tOK, OK. There are too much combo's\n");
+		return -EINVAL;
+	}
 
 	if (pci_enable_device(dev) < 0) {
 		pr_info("[pb173]\tcan't enable device\n");
@@ -459,6 +501,16 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 	data->dma_virt = dma_alloc_coherent(&dev->dev, data->dma_nb, &data->dma_phys, GFP_KERNEL);
 	if (!data->dma_virt)
 		goto error_dma;
+
+
+	
+	/* register misc device */
+	miscdev_combo_data = data;
+	rv = misc_register(&combo_misc);
+	if (rv)
+		goto error_misc;
+
+
 	data->way = 0; /* we don't use interrupts */
 
 	/* tasklet */
@@ -470,9 +522,10 @@ static int my_probe(struct pci_dev *dev, const struct pci_device_id *dev_id)
 
 	/* test ints */
 	test_transfer_int_out(data);
-
 	return 0;
 
+error_misc:
+	dma_free_coherent(&dev->dev, 100, data->dma_virt, data->dma_phys);
 error_dma:
 	combo_int_disable(data->bar0, 0x1000);
 	combo_int_disable(data->bar0, 0x0100);
@@ -483,10 +536,12 @@ error_kmalloc:
 	iounmap(bar0);
 error_map:
 	pci_release_region(dev, 0);
-
 error_request:
 	pci_disable_device(dev);
 error_enable:
+
+	miscdev_combo_data = NULL;
+	atomic_dec(&miscdev_in_use);
 	return -EIO;
 }
 
@@ -494,11 +549,13 @@ static void my_remove(struct pci_dev *dev)
 {
 	struct combo_data *data;
 
+	/* deregister misc device */
+	miscdev_combo_data = NULL;
+	misc_deregister(&combo_misc);
+	atomic_dec(&miscdev_in_use);
 
 	data = pci_get_drvdata(dev);
-
 	tasklet_kill(&data->tasklet);
-
 	dma_free_coherent(&dev->dev, 100, data->dma_virt, data->dma_phys);
 	combo_int_disable(data->bar0, 0x1000);
 	combo_int_disable(data->bar0, 0x0100);
@@ -533,6 +590,8 @@ static struct pci_driver combo_driver = {
 static int my_init(void)
 {
 	int rv;
+
+
 	rv = pci_register_driver(&combo_driver);
 	if (rv < 0) {
 		return -EIO;
