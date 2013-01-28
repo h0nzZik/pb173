@@ -420,8 +420,10 @@ static struct miscdevice combo_misc = {
 	.minor = MISC_DYNAMIC_MINOR,
 	.name = "combo_dma",
 	.fops = &combo_fops,
-	.nodename = "combo_dma_name",
+/*	we don't need it
+ 	.nodename = "combo_dma_name",
 	.mode = 0666,
+*/
 };
 
 
