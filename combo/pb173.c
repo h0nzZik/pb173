@@ -551,25 +551,28 @@ static void my_remove(struct pci_dev *dev)
 {
 	struct combo_data *data;
 
+	pr_info("[pb173]\tremoving %x:%x\n", dev->vendor, dev->device);
+	pr_info("[pb173]\tbus no: %x, slot: %x, func: %x\n", dev->bus->number,
+			PCI_SLOT(dev->devfn), PCI_FUNC(dev->devfn));
+
 	/* deregister misc device */
 	miscdev_combo_data = NULL;
 	misc_deregister(&combo_misc);
 	atomic_dec(&miscdev_in_use);
 
 	data = pci_get_drvdata(dev);
-	tasklet_kill(&data->tasklet);
-	dma_free_coherent(&dev->dev, 100, data->dma_virt, data->dma_phys);
+	del_timer_sync(&data->timer);
+
 	combo_int_disable(data->bar0, 0x1000);
 	combo_int_disable(data->bar0, 0x0100);
-	del_timer_sync(&data->timer);
-	pr_info("[pb173]\tremoving %x:%x\n", dev->vendor, dev->device);
-	pr_info("[pb173]\tbus no: %x, slot: %x, func: %x\n", dev->bus->number,
-			PCI_SLOT(dev->devfn), PCI_FUNC(dev->devfn));
-
 	free_irq(dev->irq, data);
+	tasklet_kill(&data->tasklet);
+
+	dma_free_coherent(&dev->dev, 100, data->dma_virt, data->dma_phys);
 	iounmap(data->bar0);
 	data->bar0 = NULL;
 	kfree(data);
+
 	pci_release_region(dev, 0);
 	pci_disable_device(dev);
 	pr_info("[pb173]\t*** removed ***\n");
