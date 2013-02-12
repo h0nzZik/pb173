@@ -50,6 +50,9 @@ static const unsigned char my_packet[] = {
 
 static const unsigned long my_packet_size = sizeof(my_packet);
 
+/* fifo */
+#define PB173_FIFO_SIZE (8*1024)
+static DECLARE_KFIFO(pb173_fifo, unsigned char, PB173_FIFO_SIZE);
 
 static struct net_device *my_device;
 
@@ -82,19 +85,44 @@ err_alloc:
 	return -ENOMEM;
 }
 
+/**
+ * Reads from ethernet device
+ */
+static DEFINE_MUTEX(fifo_read_mutex);
+static ssize_t net_read(struct file *filp, char __user *buf,
+		size_t count, loff_t *offp)
+{
+	ssize_t no;
+	int rv;
 
+	if (mutex_lock_interruptible(&fifo_read_mutex))
+		return -ERESTARTSYS;
+
+	rv = kfifo_to_user(&pb173_fifo, buf, count, &no);
+
+	mutex_unlock(&fifo_read_mutex);
+
+	if (rv)
+		return -EFAULT;
+	else
+		return no;
+
+}
+	
 static struct file_operations net_fops = {
 	.owner = THIS_MODULE,
 	.write = net_write,
+	.read = net_read,
 };
 
 
 /* some interface in /dev */
 static atomic_t md_use = ATOMIC_INIT(0);
 static struct miscdevice net_misc = {
-	.minor = MISC_DYNAMIC_MINOR,
-	.name  = "pb173_net",
-	.fops  = &net_fops,
+	.minor	= MISC_DYNAMIC_MINOR,
+	.name 	= "pb173_net",
+	.fops 	= &net_fops,
+	.mode	= 0666,
 };
 
 
@@ -135,15 +163,37 @@ static void my_timer_func(unsigned long data)
 	netif_rx(packet);
 }
 
+
+/* */
+static DEFINE_MUTEX(fifo_write_mutex);
 /**
  * When someone wants to send a data through our device
  * @param skb	data to send
  * @param dev	target device
+ * 
  */
 static netdev_tx_t my_netdev_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
+	ssize_t n;
+
 	pr_info("[my_netdev]\tstart xmit\n");
+
+	/* <lock> */
+	if (mutex_lock_interruptible(&fifo_write_mutex))
+		return -ERESTARTSYS;
+
 	print_hex_dump_bytes("", 0, skb->data, skb->len);
+
+	/* there is only one concurrent writer */
+	n = kfifo_avail(&pb173_fifo);
+
+	if (n < skb->len)
+		pr_warn("[my_netdev]\tpacket dropped\n");
+	else
+		kfifo_in(&pb173_fifo, skb->data, skb->len);
+
+	mutex_unlock(&fifo_write_mutex);
+	/* </lock> */
 	dev_kfree_skb(skb);
 	return NETDEV_TX_OK;
 }
@@ -183,6 +233,7 @@ static int my_netdev_open(struct net_device *dev)
 	if (misc_register(&net_misc))
 		goto err_register;
 
+	INIT_KFIFO(pb173_fifo);
 	priv = netdev_priv(dev);
 	init_timer(&priv->timer);
 	setup_timer(&priv->timer, my_timer_func, (long)dev);
